@@ -4,32 +4,20 @@ from typing import TypedDict, Dict, Any, List, Tuple
 from langgraph.graph import StateGraph, START, END
 from sqlalchemy import select, bindparam, cast
 from sqlalchemy.orm import Session
+from backend.pipelines.graphs.ingest_graph.state import GraphState
 
-from services.normalize_article import normalize_article
-from repositories.articles import insert_article
-from repositories.analysis import insert_analysis_packet
-from services.news_analysis import analyze_news
-from services.rag import get_style_guide, get_brand_snippets
-from services.verify_output import verify_packet
-from services.embeddings import embed_text
-from db.session import SessionLocal
-from db.models import Article
-from db.types import Vector1536
-
-
-class GraphState(TypedDict, total=False):
-    url: str
-    title: str  # <-- THIS IS THE FIX
-    unstructured_article: str
-    article_row: Dict[str, Any]
-    insert_status: str
-    insert_ref_url: str
-    insert_metric: Any
-    related_articles: List[Dict[str, Any]]
-    analysis: Dict[str, Any]
-    verified: bool
-    verification_issues: List[str]
-    alerted: bool
+from backend.pipelines.graphs.web_scrapper_graph import graph as initial_graph
+from backend.pipelines.graphs.web_scrapper_graph.state import InitState, OverallState
+from backend.pipelines.graphs.ingest_graph.nodes.normalize_article import normalize_article
+from backend.repositories.articles import insert_article
+from backend.repositories.analysis import insert_analysis_packet
+from backend.pipelines.graphs.ingest_graph.nodes.news_analysis import analyze_news
+from backend.services.rag import get_style_guide, get_brand_snippets
+from backend.services.verify_output import verify_packet
+from backend.services.embeddings import embed_text
+from backend.db.session import SessionLocal
+from backend.db.models import Article
+from backend.db.types import Vector1536
 
 
 # --- Nodes ---
@@ -102,7 +90,7 @@ def node_analyze(state: GraphState) -> GraphState:
     try:
         # Style and brand snippets (RAG)
         style = get_style_guide()
-        qtext = f"{state['article_row'].get('title','')} {state['article_row'].get('summary','')}"
+        qtext = f"{state['article_row'].get('title', '')} {state['article_row'].get('summary', '')}"
         rag = get_brand_snippets(session, qtext, k=3)
 
         # Build primary dict from DB row for consistency
@@ -128,10 +116,10 @@ def node_verify_and_persist(state: GraphState) -> GraphState:
     # Build sources text for verification
     parts = []
     parts.append(
-        f"{state['article_row'].get('title','')} :: {state['article_row'].get('summary','')}"
+        f"{state['article_row'].get('title', '')} :: {state['article_row'].get('summary', '')}"
     )
     for r in state.get("related_articles", []):
-        parts.append(f"{r.get('title','')} :: {r.get('summary','')}")
+        parts.append(f"{r.get('title', '')} :: {r.get('summary', '')}")
     sources_text = "\n\n".join(parts)
 
     ver = verify_packet(sources_text, state["analysis"])
@@ -171,3 +159,4 @@ graph_builder.add_edge("analyze", "verify_and_persist")
 graph_builder.add_edge("verify_and_persist", END)
 
 graph = graph_builder.compile()
+

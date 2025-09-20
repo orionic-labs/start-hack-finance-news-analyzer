@@ -21,6 +21,10 @@ dependencies = [
   "requests>=2.31",
   "beautifulsoup4>=4.12",
   "python-dotenv>=1.0",
+    "crawl4ai>=0.7.4",
+    "langchain-openai>=0.3.33",
+    "simhash>=2.1.2",
+    ""
 ]
 
 [tool.ruff]

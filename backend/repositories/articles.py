@@ -7,12 +7,12 @@ from sqlalchemy import select, desc, bindparam, cast, literal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from db.session import SessionLocal
-from db.models import Article
-from db.types import Vector1536
-from services.dedup import hamming_distance
-from services.embeddings import embed_text
-from utils.helpers import utcnow, to_int
+from backend.db.session import SessionLocal
+from backend.db.models import Article
+from backend.db.types import Vector1536
+from backend.services.dedup import hamming_distance
+from backend.services.embeddings import embed_text
+from backend.utils.helpers import utcnow, to_int
 
 HAMMING_THRESHOLD = 3
 EMBED_SIM_THRESHOLD = 0.92
