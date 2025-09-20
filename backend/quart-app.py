@@ -3,21 +3,26 @@ from __future__ import annotations
 import os
 import io
 import anyio
+import asyncio
+import tempfile
+from datetime import datetime
 from email.message import EmailMessage
+from typing import Union, Optional
+
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, ValidationError, EmailStr
+from quart import Quart, Blueprint, request, jsonify, send_file, abort, make_response
+from quart_cors import cors
+
 from db.session import SessionLocal, engine, Base
 from db.models import Account
 from security.crypto import encrypt_secret
-from pydantic import ValidationError
-import asyncio
-from quart import Quart, Blueprint, request, jsonify, send_file, abort
-from quart_cors import cors
-from pydantic import BaseModel, Field, ValidationError, EmailStr
-from dotenv import load_dotenv
-from typing import Union, Optional
-# imports you need at top of app_quart.py
-import tempfile
+from scripts.general_report_generator import Customer, call_llm
 from scripts.render_report_pdf import render_report_pdf
-from scripts.general_report_generator import call_llm
+
+
+
+
 
 # ---------- Schemas ----------
 class IngestRequest(BaseModel):
@@ -156,47 +161,102 @@ async def send_email():
 
 @api.post("/reports/download_pdf")
 async def download_pdf():
-    # validate() is your existing helper
-    payload = await validate(ReportRequest, await request.get_json(force=True))
-
-    # Render to a temp file in a worker thread (non-blocking for Quart)
-    async def _render_to_tmp() -> bytes:
-        def work() -> bytes:
-            with tempfile.TemporaryDirectory() as tmp:
-                out_path = os.path.join(tmp, payload.filename)
-                render_report_pdf(
-                    payload.body,
-                    out_path,
-                    company=payload.company,
-                    report_title=payload.report_title,
-                    report_date=payload.report_date,
-                    logo_path=payload.logo_path,
-                    include_cover=payload.include_cover,
-                )
-                with open(out_path, "rb") as f:
-                    return f.read()
-        return await anyio.to_thread.run_sync(work)
-
     try:
+        data = await request.get_json(force=True)
+        
+        # Extract data from request
+        customers_data = data.get("customers", [])
+        text = data.get("text", data.get("body", ""))
+        filename = data.get("filename", "financial_report.pdf")
+        company = data.get("company", "Your Company Name")
+        report_title = data.get("report_title", "Financial Report")
+        report_date = data.get("report_date", datetime.utcnow().strftime("%Y-%m-%d"))
+        logo_path = data.get("logo_path")
+        include_cover = data.get("include_cover", True)
+
+        if not text:
+            return jsonify({"error": "Text content is required"}), 400
+
+        # Convert customers data to Customer objects
+        customers = [
+            Customer(
+                name=c.get("name", ""),
+                portfolio=c.get("portfolio", {}),
+                notes=c.get("notes", "")
+            )
+            for c in customers_data
+        ]
+
+        # Generate the report using general_report_generator
+        generated_report = await call_llm(text, customers, "gpt-4o-mini", 0.25)
+
+        async def _render_to_tmp() -> bytes:
+            def work() -> bytes:
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_path = os.path.join(tmp, filename)
+                    render_report_pdf(
+                        generated_report,
+                        out_path,
+                        company=company,
+                        report_title=report_title,
+                        report_date=report_date,
+                        logo_path=logo_path,
+                        include_cover=include_cover,
+                    )
+                    with open(out_path, "rb") as f:
+                        return f.read()
+            return await anyio.to_thread.run_sync(work)
+
         pdf_bytes = await _render_to_tmp()
-    except FileNotFoundError as e:
-        # e.g., missing logo file path
-        abort(400, description=f"Asset missing: {e}")
-    except Exception:
-        abort(501, description="PDF generator unavailable")
 
-    return await send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=payload.filename,
-    )
+        # Create response with proper headers
+        response = await make_response(pdf_bytes)
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
-
+    except Exception as e:
+        print(f"Error in download_pdf: {e}")
+        return jsonify({"error": str(e)}), 500
 @api.post("/reports/regenerate")
 async def reg_report():
-    payload = await validate(RagQueryRequest, await request.get_json(force=True))
-    return "News text"
+    try:
+        data = await request.get_json(force=True)
+
+        customers_data = data.get("customers", [])
+        text = data.get("text")
+
+        if not text:
+            return jsonify({"error": "Text is required"}), 400
+
+        customers = [
+            Customer(
+                name=c.get("name", ""),
+                portfolio=c.get("portfolio", {}),
+                notes=c.get("notes", "")
+            )
+            for c in customers_data
+        ]
+
+        # --- FIX START ---
+        # If call_llm is async:
+        generated_report = await call_llm(text, customers, "gpt-4o-mini", 0.25)
+
+        # If call_llm is sync:
+        # generated_report = await anyio.to_thread.run_sync(
+        #     call_llm, text, customers, "gpt-4o-mini", 0.25
+        # )
+        # --- FIX END ---
+
+        return jsonify({
+            "success": True,
+            "generatedReport": generated_report,
+            "processedAt": datetime.utcnow().isoformat()
+        })
+
+    except Exception as e:
+        print(f"Error in reg_report: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @api.post("/podcasts/regenerate")
 async def reg_podcast():
@@ -278,7 +338,14 @@ async def edit_source():
 def create_app() -> Quart:
     load_dotenv()
     app = Quart(__name__)
-    app = cors(app, allow_origin="*")
+    app = cors(
+        app, 
+        allow_origin=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        allow_credentials=True
+    )
+    
     app.config.update(JSON_SORT_KEYS=False)
 
     from werkzeug.exceptions import HTTPException
