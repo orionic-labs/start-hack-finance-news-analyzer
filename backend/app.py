@@ -1,7 +1,6 @@
-# run_pipeline.py
+# app.py
 from __future__ import annotations
-
-import sys
+import json
 from textwrap import shorten
 from dotenv import load_dotenv
 
@@ -10,62 +9,100 @@ load_dotenv()
 
 # Import the compiled graph
 try:
-    from pipelines.ingest_graph import graph  # restructured path
+    from pipelines.ingest_graph import graph
 except ImportError:
-    from graph import graph  # fallback if you kept the old location
-
-# DB insert (with simhash + embedding dedup inside)
-try:
-    from repositories.articles import insert_article
-except ImportError:
-    raise RuntimeError(
-        "repositories.articles.insert_article not found. Check your imports/paths."
-    )
+    print("Could not import graph from pipelines.ingest_graph")
+    # Fallback for original structure
+    from graph import graph
 
 
 def main():
-    # CLI args: url and article text (optional)
-    url = (
-        sys.argv[1]
-        if len(sys.argv) > 1
-        else "https://news.example.com/acme/q3-press-release"
-    )
-    article = (
-        sys.argv[2]
-        if len(sys.argv) > 2
-        else "Press release: Acme Corp Q3 results, revenue up 12% y/y, EPS beat; guidance raised."
-    )
-
-    print("\n=== INPUT ===")
-    print("URL:", url)
-    print("Article (first 160 chars):", shorten(article, width=160, placeholder="..."))
-
-    # 1) Run graph: normalize -> simhash -> embedding (your normalize_article node handles it)
-    state_in = {"url": url, "unstructured_article": article}
-    state_out = graph.invoke(state_in)
-    row = state_out["article_row"]
-
-    print("\n=== NORMALIZED ===")
-    print("title       :", row.get("title"))
+    """
+    Reads articles from a JSON file, combines title and main_text,
+    and runs each through the full analysis pipeline.
+    """
+    json_file_path = "parsed_articles_market.json"
     print(
-        "summary     :", shorten(row.get("summary") or "", width=200, placeholder="...")
+        f"==================== PIPELINE BATCH START ({json_file_path}) ===================="
     )
-    print("published_at:", row.get("published_at"))
-    print("lang        :", row.get("lang"))
-    print("source_domain:", row.get("source_domain"))
-    print("hash_64     :", row.get("hash_64"))
-    print("has embedding:", bool(row.get("content_emb")))
 
-    # 2) Push to DB (repositories.articles does: simhash dedup -> embedding dedup -> insert)
-    print("\n=== DB WRITE ===")
-    status, ref_url, metric = insert_article(row)
-    print("status:", status)
-    if ref_url:
-        print("matched row:", ref_url)
-    if metric is not None:
-        print("metric:", metric)
+    try:
+        with open(json_file_path, "r") as f:
+            # The file contains a list of JSON strings, so we parse the outer list first
+            articles_data = json.load(f)
+    except FileNotFoundError:
+        print(f"ERROR: The file '{json_file_path}' was not found.")
+        print("Please make sure it is in the same directory as this script.")
+        return
+    except json.JSONDecodeError as e:
+        print(
+            f"ERROR: Could not parse '{json_file_path}'. It may not be valid JSON. Details: {e}"
+        )
+        return
 
-    print("\nDone.")
+    for i, article_str in enumerate(articles_data):
+        try:
+            # Each item in the list is a string that needs to be parsed into a dict
+            article = json.loads(article_str)
+        except json.JSONDecodeError:
+            print(f"\n--- Skipping Article {i+1} (Invalid JSON string) ---")
+            continue
+
+        url = article.get("url")
+        if not url:
+            print(f"\n--- Skipping Article {i+1} (Missing URL) ---")
+            continue
+
+        # Combine title and main_body as requested to match the input schema
+        title = article.get("title", "")
+        main_text = article.get("main_text", "")
+        unstructured_article = f"{title}\n\n{main_text}"
+
+        print(f"\n\n--- PROCESSING ARTICLE {i+1}/{len(articles_data)} ---")
+        print("URL:", url)
+        print(
+            "Article (first 160 chars):",
+            shorten(unstructured_article, width=160, placeholder="..."),
+        )
+
+        # Define the initial state for the graph
+        initial_state = {
+            "url": url,
+            "unstructured_article": unstructured_article,
+        }
+
+        print("\n... Invoking analysis graph ...")
+        try:
+            # Run the graph
+            final_state = graph.invoke(initial_state)
+
+            # Print the detailed final state
+            print("\n✅ DONE. Final State:")
+            for key, value in final_state.items():
+                if key == "article_row" and isinstance(value, dict):
+                    print(f"  - {key}:")
+                    for k, v in value.items():
+                        # Shorten long text fields for cleaner output
+                        display_v = (
+                            shorten(str(v), width=100, placeholder="...")
+                            if isinstance(v, str) and len(str(v)) > 100
+                            else v
+                        )
+                        print(f"    - {k}: {display_v}")
+                elif key == "analysis" and isinstance(value, dict):
+                    print(f"  - {key}:")
+                    # Pretty print the analysis packet
+                    print(json.dumps(value, indent=4))
+                else:
+                    print(f"  - {key}: {value}")
+
+        except Exception as e:
+            print(f"\n❌ ERROR processing article {url}: {e}")
+            # Optionally, print full traceback for debugging
+            # import traceback
+            # traceback.print_exc()
+
+    print("\n\n==================== PIPELINE BATCH COMPLETE ====================")
 
 
 if __name__ == "__main__":

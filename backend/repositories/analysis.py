@@ -1,5 +1,6 @@
 # repositories/analysis.py
 from __future__ import annotations
+import json
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -21,20 +22,23 @@ def insert_analysis_packet(
         ),
         {
             "url": article_url,
+            # These are TEXT[] (array) columns, so we pass the Python lists directly.
             "cluster_ids": cluster_urls,
-            "event_type": packet["extracted"]["event_type"],
             "tickers": packet["extracted"]["tickers"],
             "companies": packet["extracted"]["companies"],
             "sectors": packet["extracted"]["sectors"],
             "geos": packet["extracted"]["geos"],
-            "numerics": packet["extracted"]["numerics"],
+            # These are JSONB columns, so we must serialize them to JSON strings.
+            "numerics": json.dumps(packet["extracted"]["numerics"]),
+            "bullets": json.dumps(packet["packet"]["bullets"]),
+            "actions": json.dumps(packet["packet"]["actions"]),
+            "risks": json.dumps(packet["packet"]["risks"]),
+            "citations": json.dumps(packet["packet"]["citations"]),
+            # These are standard types.
+            "event_type": packet["extracted"]["event_type"],
             "impact_score": packet["impact"]["impact_score"],
             "confidence": packet["impact"]["confidence"],
             "novelty": packet["impact"]["novelty"],
             "executive_summary": packet["packet"]["executive_summary"],
-            "bullets": packet["packet"]["bullets"],
-            "actions": packet["packet"]["actions"],
-            "risks": packet["packet"]["risks"],
-            "citations": packet["packet"]["citations"],
         },
     )

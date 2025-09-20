@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Optional, Tuple, Union
 
-from sqlalchemy import select, desc, bindparam, cast
+from sqlalchemy import select, desc, bindparam, cast, literal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -54,7 +54,9 @@ def _find_semantic_duplicate_db(
     cutoff = utcnow() - timedelta(days=LOOKBACK_DAYS)
 
     distance = Article.content_emb.op("<=>")(cast(bindparam("emb"), Vector1536()))
-    similarity = (1 - distance).label("similarity")
+    # FIX: Use literal(1) to prevent SQLAlchemy from applying the vector's
+    # bind processor to the integer, which caused the TypeError.
+    similarity = (literal(1) - distance).label("similarity")
 
     stmt = (
         select(Article.url, similarity)

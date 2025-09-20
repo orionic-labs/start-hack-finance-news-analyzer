@@ -41,9 +41,10 @@ class NewsAnalysis(BaseModel):
 
 
 # ---------- LLMs ----------
-_extractor = ChatOpenAI(model="gpt-4o", temperature=0)
-_scorer = ChatOpenAI(model="gpt-4o", temperature=0)
-_writer = ChatOpenAI(model="gpt-4o", temperature=0)
+# Adjusted temperature for each task: low for extraction, higher for analysis/writing.
+_extractor = ChatOpenAI(model="gpt-4o", temperature=0.1)
+_scorer = ChatOpenAI(model="gpt-4o", temperature=0.4)
+_writer = ChatOpenAI(model="gpt-4o", temperature=0.5)
 
 # ---------- Prompts ----------
 extract_prompt = ChatPromptTemplate.from_messages(
@@ -51,14 +52,18 @@ extract_prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             """
-Extract market-relevant facts from the following articles.
-Return ONLY JSON with keys: event_type, tickers, companies, sectors, geos, numerics.
+You are an expert financial analyst. Your task is to extract key, market-relevant facts from the provided news articles with extreme precision.
 
-Rules:
-- event_type must be one of: {event_types}.
-- Tickers are uppercase (e.g., AAPL). If none, [].
-- Do not invent numbers; only include explicit values you see.
-- Use only the provided texts.
+Return ONLY a single JSON object with the following keys: event_type, tickers, companies, sectors, geos, numerics.
+
+**Extraction Rules:**
+- **event_type**: Classify the primary news event. Must be one of: {event_types}.
+- **tickers**: Extract or infer all valid stock tickers (e.g., AAPL, GOOG). If none are found, return an empty list [].
+- **companies**: Extract all explicitly named companies. If none, return [].
+- **sectors**: Extract or infer relevant market sectors (e.g., "Technology", "Healthcare"). If none, return [].
+- **geos**: Extract or infer countries or regions central to the story (e.g., "U.S.", "Europe"). If none, return [].
+- **numerics**: Extract key financial figures. The key should be a descriptive snake_case label (e.g., "revenue_growth_yoy", "eps_beat_usd"). Example: {{"revenue_growth_yoy": 0.12, "eps_beat_usd": 0.05}}.
+- **Accuracy is critical**: Do not invent data. Only extract values explicitly present in the text.
 
 ARTICLES:
 {articles_block}
@@ -72,14 +77,30 @@ score_prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             """
-Given extracted facts and metadata, score:
-- impact_score (0-100): how market-moving for CIOs today
-- confidence (0..1): certainty in the facts
-- novelty (0..1): how new vs. prior coverage
-Return ONLY JSON with keys: impact_score, confidence, novelty, rationale (2-3 lines).
+You are a seasoned investment strategist providing a rapid assessment of news for a Chief Investment Officer.
+Based on the extracted facts and metadata, provide a quantitative and qualitative analysis.
+Return ONLY a single JSON object with keys: impact_score, confidence, novelty, rationale.
 
-Consider: recency, event type weight, numeric magnitudes, breadth of affected assets,
-source credibility, and cross-source consistency.
+**Scoring Guidelines:**
+- **impact_score (0-100)**: How market-moving is this news for institutional investors today?
+    - 0-20: Trivial, background noise.
+    - 21-40: Minor relevance, affects a single stock or is a minor update.
+    - 41-60: Moderate, affects a sector or a well-known company.
+    - 61-80: High, significant market-wide or large-cap company implications.
+    - 81-100: Critical, a major market-moving event (e.g., Fed pivot, major M&A).
+- **confidence (0.0-1.0)**: Your certainty in the accuracy and clarity of the extracted facts. 1.0 means high confidence from a credible source.
+- **novelty (0.0-1.0)**: How new is this information? 1.0 means this is the first time this event/data has been reported. 0.0 means it is a rehash of widely known information.
+- **rationale (2-3 sentences)**: Briefly explain your scores, focusing on the "so what" for investors.
+
+**Factors to Consider:**
+- **Source Credibility**: Is this a primary source (e.g., press release) or a major news outlet?
+- **Magnitude**: How significant are the reported numbers (e.g., percentage change, dollar amounts)?
+- **Breadth**: Does it affect a single company, a sector, or the entire market?
+- **Recency**: How old is the news?
+
+METADATA & FACTS:
+{meta}
+{extracted}
 """.strip(),
         )
     ]
@@ -90,23 +111,38 @@ write_prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             """
-Write an analyst-ready brief in the W&P tone.
+You are a senior analyst at a top-tier investment firm, writing a brief for the morning meeting. Your tone should be objective, concise, and forward-looking, avoiding hype or speculation.
+
+Reference the provided style guide and any RAG snippets for tone. Your task is to synthesize the extracted facts and impact scores into a polished, analyst-ready brief.
+
+Return ONLY a single JSON object with the specified keys.
+
+**Output Structure & Content Guidelines:**
+- **executive_summary**: 2-3 sentences. Start with the most important fact. Clearly state what happened and its immediate implication for investors. Max 350 characters.
+- **bullets**: 3-5 bullet points. Each should be a complete, quantitative sentence. Focus on what happened, why it matters, and key data points.
+- **actions**: 0-3 **potential** action items for review by a portfolio manager. These must be phrased as considerations, not direct advice (e.g., "Consider reviewing exposure to X," not "Buy/Sell X").
+- **risks**: 1-3 key uncertainties or potential negative outcomes related to the news. What could go wrong or what is still unknown?
+- **citations**: A list of {{url, title, published_at}} for all source articles provided.
+
+**Crucial Rules:**
+- Synthesize, do not just repeat the input.
+- Do not invent numbers or tickers not present in the provided facts.
+- Adhere strictly to the total character limit of 900 characters for the entire brief.
 
 Style guide:
 {style_guide}
 
-Use these short reference snippets (if any) as guidance for tone/phrasing:
+Reference snippets:
 {rag_snippets}
 
-Return ONLY JSON with:
-- executive_summary: 2-3 sentences, neutral, under 350 chars
-- bullets: 3-6 bullets (what happened, why it matters, key numbers)
-- actions: 0-3 careful ideas for human review (e.g., "consider reviewing exposure to ...")
-- risks: 1-3 caveats or uncertainties
-- citations: list of {url,title,published_at} for the sources we passed
+Extracted Facts:
+{extracted}
 
-Do not invent numbers or tickers not present in extracts.
-Keep total under 900 characters.
+Impact Analysis:
+{impact}
+
+Source Citations:
+{citations}
 """.strip(),
         )
     ]
@@ -115,12 +151,18 @@ Keep total under 900 characters.
 
 # ---------- Chains ----------
 def _extract(articles_block: str) -> ExtractedFacts:
-    chain = extract_prompt | _extractor.with_structured_output(ExtractedFacts)
-    return chain.invoke({"articles_block": articles_block, "event_types": ", ".join(EVENT_TYPES)})
+    chain = extract_prompt | _extractor.with_structured_output(
+        ExtractedFacts, method="function_calling"
+    )
+    return chain.invoke(
+        {"articles_block": articles_block, "event_types": ", ".join(EVENT_TYPES)}
+    )
 
 
 def _score(meta: Dict[str, Any], extracted: ExtractedFacts) -> ImpactSignals:
-    chain = score_prompt | _scorer.with_structured_output(ImpactSignals)
+    chain = score_prompt | _scorer.with_structured_output(
+        ImpactSignals, method="function_calling"
+    )
     return chain.invoke({"meta": meta, "extracted": extracted.model_dump()})
 
 
@@ -131,7 +173,9 @@ def _write(
     impact: ImpactSignals,
     citations: List[Dict[str, Any]],
 ) -> AnalystPacket:
-    chain = write_prompt | _writer.with_structured_output(AnalystPacket)
+    chain = write_prompt | _writer.with_structured_output(
+        AnalystPacket, method="function_calling"
+    )
     return chain.invoke(
         {
             "style_guide": style_guide,
@@ -189,7 +233,9 @@ def analyze_news(
         ts = a.get("published_at")
         return f"- {a.get('title','').strip()} [{a.get('source_domain','')} ; {ts}]\n  {a.get('summary','').strip()}"
 
-    articles_block = "\n".join([pack(primary_article)] + [pack(x) for x in related_articles])
+    articles_block = "\n".join(
+        [pack(primary_article)] + [pack(x) for x in related_articles]
+    )
 
     extracted = _extract(articles_block)
 
@@ -223,7 +269,11 @@ def analyze_news(
             "published_at": str(primary_article.get("published_at")),
         }
     ] + [
-        {"url": x.get("url"), "title": x.get("title"), "published_at": str(x.get("published_at"))}
+        {
+            "url": x.get("url"),
+            "title": x.get("title"),
+            "published_at": str(x.get("published_at")),
+        }
         for x in related_articles
     ]
 
