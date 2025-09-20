@@ -34,11 +34,8 @@ class ArticleEntry(ArticleNormalizationEntry):
     content_emb: Optional[List[float]] = None
 
 
-# Use a low temperature for deterministic, factual extraction.
 _model = ChatOpenAI(model="gpt-4o", temperature=0.1, max_retries=2)
 
-# --- ENHANCED & FOCUSED PROMPT ---
-# The prompt is updated to demand a more comprehensive summary.
 _prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -67,14 +64,13 @@ Article to process:
     ]
 )
 
-# Use function_calling for more robust structured output
+
 _chain = _prompt | _model.with_structured_output(
     ArticleNormalizationEntry, method="function_calling"
 )
 
 
 def normalize_article(state: Dict[str, Any]) -> Dict[str, Any]:
-    # The function now expects 'title' to be in the input state.
     url: str = state["url"]
     title: str = state["title"]
     article_text: str = state["unstructured_article"]

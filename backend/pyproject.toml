@@ -14,6 +14,7 @@ dependencies = [
   "pgvector>=0.2.5",
   "alembic>=1.13",
   "openai>=1.43",
+  "langchain-ibm>=0.1.3", # Added missing dependency for Watsonx.ai
   "langgraph>=0.2.0",
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",
@@ -29,3 +30,16 @@ select = ["E", "F", "I", "UP"]
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
+
+# --- FIX: Explicitly declare packages ---
+# This section tells setuptools which directories to include,
+# resolving the "Multiple top-level packages" error.
+[tool.setuptools]
+packages = [
+    "core",
+    "db",
+    "pipelines",
+    "repositories",
+    "services",
+    "utils"
+]
