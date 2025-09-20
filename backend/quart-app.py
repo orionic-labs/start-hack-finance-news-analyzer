@@ -1,3 +1,4 @@
+from __future__ import annotations
 # app_quart.py
 import os
 import io
@@ -12,10 +13,12 @@ from quart import Quart, Blueprint, request, jsonify, send_file, abort
 from quart_cors import cors
 from pydantic import BaseModel, Field, ValidationError, EmailStr
 from dotenv import load_dotenv
+from typing import Union, Optional
 # imports you need at top of app_quart.py
 import tempfile
 from scripts.render_report_pdf import render_report_pdf
 from scripts.general_report_generator import call_llm
+
 # ---------- Schemas ----------
 class IngestRequest(BaseModel):
     source_urls: list[str] = Field(min_items=1)
@@ -32,40 +35,37 @@ class RagQueryRequest(BaseModel):
 
 class SendEmailRequest(BaseModel):
     to: EmailStr
-    subject: str = Field(min_length=1, max_length=200)
-    text: str | None = None
-    html: str | None = None
+    subject: str
+    text: Optional[str] = None
+    html: Optional[str] = None
     cc: list[EmailStr] = []
     bcc: list[EmailStr] = []
 
 # MVP CRUD-ish payloads
 class AccountPayload(BaseModel):
-    id: str | None = None
-    platform: str | None = None
+    id: Optional[str] = None
+    platform: str
     username: str
     password: str
-    link: str | None = None
 
 class ClientPayload(BaseModel):
-    id: str | None = None
+    id: Optional[str] = None
     name: str
-    email: EmailStr | None = None
+    email: EmailStr
 
 class SourcePayload(BaseModel):
-    id: str | None = None
+    id: Optional[str] = None
     name: str
     url: str
 
 class ReportRequest(BaseModel):
-    body: str = Field(min_length=1)                # the Markdown
-    company: str = "Wellershoff Partners"
-    report_title: str = "Aktuelle Markteinschätzung"
-    report_date: str = "20.09.2025"
-    logo_path: str | None = "WPlogo.png"
+    body: str
+    filename: str = "report.pdf"
+    company: Optional[str] = None
+    report_title: Optional[str] = None
+    report_date: Optional[str] = None
+    logo_path: Optional[str] = None
     include_cover: bool = True
-    filename: str = "Official_Financial_Report.pdf"  # download name
-
-
 # ---------- Helpers ----------
 async def validate(model, data):
     try:
@@ -92,8 +92,8 @@ import aiosmtplib
 async def send_email_async(
     to: str,
     subject: str,
-    text: str | None = None,
-    html: str | None = None,
+    text: Union[str, None] = None,
+    html: Union[str, None] = None,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
 ):
@@ -301,3 +301,5 @@ def create_app() -> Quart:
     return app
 
 app = create_app()
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5001)

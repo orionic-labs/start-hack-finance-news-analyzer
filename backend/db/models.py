@@ -8,6 +8,7 @@ from .session import Base
 Base = declarative_base()
 
 
+
 class Article(Base):
     __tablename__ = "articles"
 
