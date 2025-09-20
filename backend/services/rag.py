@@ -4,9 +4,9 @@ from typing import List
 from sqlalchemy import select, bindparam, cast
 from sqlalchemy.orm import Session
 
-from db.models import Article
-from db.types import Vector1536
-from services.embeddings import embed_text
+from backend.db.models import Article
+from backend.db.types import Vector1536
+from backend.services.embeddings import embed_text
 
 DEFAULT_STYLE = (
     "Tone: neutral, concise, evidence-led. Avoid hype. Prefer numbers over adjectives. "
