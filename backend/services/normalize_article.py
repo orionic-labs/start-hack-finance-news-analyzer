@@ -1,26 +1,26 @@
 from __future__ import annotations
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from datetime import datetime, date
-from typing import Optional, Any, Dict
+from utils.helpers import utcnow
+from datetime import date, datetime
+from typing import Optional, Any, Dict, List
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
-from simhash import Simhash
+
+from services.dedup import simhash64, to_signed_64
+from services.embeddings import embed_text
+
+load_dotenv()
 
 
 class ArticleNormalizationEntry(BaseModel):
     title: str = Field(None, description="Exact article headline")
     summary: str = Field(None, description="2-4 sentence neutral summary")
-    published_at: date = Field(None, description="Publication date (YYYY-MM-DD)")
-    lang: Optional[str] = Field(
-        None, description="Two-letter uppercase ISO 639-1 code (e.g., EN, DE)"
-    )
+    published_at: date = Field(None, description="YYYY-MM-DD")
+    lang: Optional[str] = Field(None, description="Two-letter uppercase ISO 639-1")
 
 
 class ArticleEntry(ArticleNormalizationEntry):
@@ -28,6 +28,7 @@ class ArticleEntry(ArticleNormalizationEntry):
     source_domain: str
     fetched_at: datetime
     hash_64: int
+    content_emb: Optional[List[float]] = None
 
 
 _model = ChatOpenAI(model="gpt-4o", temperature=0, max_retries=2)
@@ -37,23 +38,16 @@ _prompt = ChatPromptTemplate.from_messages(
         (
             "system",
             """
+You are an information-extraction engine for financial/news content.
 Given an unstructured article body, return a SINGLE JSON object with EXACTLY these keys:
-  - "title": exact headline as printed in the article
-  - "summary": objective summary of the article, no quotes, links, or HTML; include key numbers, entities, and dates
-  - "published_at": publication date in YYYY-MM-DD, or null if unknown
-  - "lang": two-letter UPPERCASE ISO 639-1 code (EN, DE, FR, etc.), or null if uncertain
-
-Strict rules:
-- Do not include any extra keys or comments.
-- "title": keep source capitalization; strip surrounding quotes; trim whitespace.
-- "summary": neutral tone; no speculation;
-- "published_at": prefer explicit on-page date; if multiple dates appear, pick the earliest one clearly marked as publication/release date. If only relative phrases (e.g., "today"), use null.
-- "lang": infer from the article body; output two-letter uppercase code; if unsure, null.
-
+  - "title": exact headline
+  - "summary": 2-4 sentences, objective, no quotes/links/HTML; include key numbers, entities, dates
+  - "published_at": YYYY-MM-DD
+  - "lang": two-letter UPPERCASE ISO 639-1 or null
 Return only the JSON object.
 Article:
 {article}
-        """.strip(),
+""".strip(),
         )
     ]
 )
@@ -65,18 +59,27 @@ def normalize_article(state: Dict[str, Any]) -> Dict[str, Any]:
     url: str = state["url"]
     article_text: str = state["unstructured_article"]
 
+    # 1) LLM normalization (title, summary, published_at, lang)
     norm = _chain.invoke({"article": article_text})
 
-    netloc = urlparse(url).netloc.lower()
-    source_domain = netloc[4:] if netloc.startswith("www.") else netloc
-    fetched_at = datetime.now()
-    hash_64 = Simhash(f"{norm.title or ''} || {norm.summary or ''}").value
+    # 2) Derived fields
+    host = urlparse(url).netloc.lower()
+    source_domain = host[4:] if host.startswith("www.") else host
+    fetched_at = utcnow()
+    raw_hash = simhash64(f"{norm.title or ''} || {norm.summary or ''}")
+    hash_64 = to_signed_64(raw_hash)
 
+    # 3) Embedding from title + summary
+    combined_text = f"{norm.title or ''}\n\n{norm.summary or ''}"
+    content_emb = embed_text(combined_text) if (norm.title or norm.summary) else None
+
+    # 4) Final entry
     entry = ArticleEntry(
         url=url,
         source_domain=source_domain,
         fetched_at=fetched_at,
         hash_64=hash_64,
+        content_emb=content_emb,
         title=norm.title,
         summary=norm.summary,
         published_at=norm.published_at,

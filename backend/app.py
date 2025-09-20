@@ -1,14 +1,72 @@
-# run_graph.py
-from graph import graph
-from db_utils import push_article
+# run_pipeline.py
+from __future__ import annotations
 
-state_in = {
-    "url": "https://example.com/news/test-article",
-    "unstructured_article": "Trump Unveils Gold, Platinum Visas to Cost Up to $5 Million Hadriana Lowenkron and Josh Wingrove Sat, September 20, 2025 at 12:02 AM GMT+2 In this article: ACN +0.06% CTSH -4.73% (Bloomberg) — President Donald Trump announced a new visa program for the world’s wealthy, a much-anticipated effort to encourage them to immigrate to the US by offering residency permits for a hefty price tag. Most Read from Bloomberg When a College Dies, Who Gets the Campus? Manhattan Casino Odds Fade After Caesars, Silverstein Foiled In Dallas, Transit Cuts Reflect Long-Simmering Suburban Tensions Should We Let Public Transit Die? The Steep Curve to Peak Urban “They’re going to spend a lot of money to come in,” Trump told reporters Friday in the Oval Office as he signed the order to create the visa program. “It’s going to raise billions of dollars, billions and billions of dollars, which is going to go to reduce taxes, pay off debt and for other good things.” Individuals can pay $1 million to receive US residency with the “Trump Gold Card,” following a processing fee and vetting, according to a website announcing the program. A “Platinum Card” will soon be available for $5 million, and allow recipients to “spend up to 270 days in the United States without being subject to U.S. taxes on non-U.S. income.” Businesses that pay a $2 million fee per employee can receive US residency for an unspecified number of workers, according to the website. “The Trump Corporate Gold Card allows your business to transfer access from one employee and grant it to another, with the cost of a transfer fee and DHS vetting. A small annual maintenance fee will also apply,” the website said, referring to the Department of Homeland Security. It’s not clear how soon the visas could be awarded. The website includes an “apply now” section, which asks applicants for their name, the region in which they live and their email address. Immigration experts say Congress likely would need to approve the program. Commerce Secretary Howard Lutnick predicted the plan would raise more than $100 billion for the US government. Trump first teased the gold card venture in February, touting the concept as an initiative that would help draw capital investment and create jobs, while also providing revenue to reduce the deficit. Lutnick joined Trump at the White House event Friday to announce the initiative. The visas for the super-rich are part of Trump’s efforts to overhaul the country’s immigration system, which also include ramped up deportations of undocumented migrants. Trump has said he wants to expand legal pathways to citizenship, particularly for high-earning individuals. “The main thing is we’re going to have great people coming in, and they’re going to be paying,” Trump said. The announcement comes as Trump is also moving to extensively overhaul the H-1B visa program, requiring a $100,000 fee for applications in a bid to curb overuse. Such a move would make it far more expensive for technology companies and other firms to employ foreign engineers and other skilled workers to fill in-demand jobs. Trump said that technology executives would be “very happy” with the golden visa program because it would allow them to bring in additional workers. Accenture, Cognizant Technology and other IT consulting stocks hit session lows on Friday on the news of the visa fee. Trump has envisioned as many as one million people purchasing the cards, but immigration experts have said that the pool of individuals who could afford to take part in the program is far smaller. —With assistance from Jason Leopold. (Updates throughout with Trump, Lutnick remarks about the visa program) Most Read from Bloomberg Businessweek How Trump Broke Corporate America’s Most Valuable Consultant American Farmers Are Feeling the Pain of Trump’s Policies ‘I Was a Weird Kid’: Jailhouse Confessions of a Teen Hacker How an Enron Parody Turned Into a Financial Mess of Its Own It’s Never Been Harder to Get a Job in Hollywood ©2025 Bloomberg L.P. Terms and Privacy Policy Privacy & Cookie Settings",
-}
+import sys
+from textwrap import shorten
+from dotenv import load_dotenv
 
-state_out = graph.invoke(state_in)
-article_row = state_out["article_row"]
+# Load .env so DATABASE_URL / OPENAI_API_KEY are available
+load_dotenv()
 
-# push to database
-push_article(article_row)
+# Import the compiled graph
+try:
+    from pipelines.ingest_graph import graph  # restructured path
+except ImportError:
+    from graph import graph  # fallback if you kept the old location
+
+# DB insert (with simhash + embedding dedup inside)
+try:
+    from repositories.articles import insert_article
+except ImportError:
+    raise RuntimeError(
+        "repositories.articles.insert_article not found. Check your imports/paths."
+    )
+
+
+def main():
+    # CLI args: url and article text (optional)
+    url = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else "https://news.example.com/acme/q3-press-release"
+    )
+    article = (
+        sys.argv[2]
+        if len(sys.argv) > 2
+        else "Press release: Acme Corp Q3 results, revenue up 12% y/y, EPS beat; guidance raised."
+    )
+
+    print("\n=== INPUT ===")
+    print("URL:", url)
+    print("Article (first 160 chars):", shorten(article, width=160, placeholder="..."))
+
+    # 1) Run graph: normalize -> simhash -> embedding (your normalize_article node handles it)
+    state_in = {"url": url, "unstructured_article": article}
+    state_out = graph.invoke(state_in)
+    row = state_out["article_row"]
+
+    print("\n=== NORMALIZED ===")
+    print("title       :", row.get("title"))
+    print(
+        "summary     :", shorten(row.get("summary") or "", width=200, placeholder="...")
+    )
+    print("published_at:", row.get("published_at"))
+    print("lang        :", row.get("lang"))
+    print("source_domain:", row.get("source_domain"))
+    print("hash_64     :", row.get("hash_64"))
+    print("has embedding:", bool(row.get("content_emb")))
+
+    # 2) Push to DB (repositories.articles does: simhash dedup -> embedding dedup -> insert)
+    print("\n=== DB WRITE ===")
+    status, ref_url, metric = insert_article(row)
+    print("status:", status)
+    if ref_url:
+        print("matched row:", ref_url)
+    if metric is not None:
+        print("metric:", metric)
+
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
