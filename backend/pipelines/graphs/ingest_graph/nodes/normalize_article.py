@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from utils.helpers import utcnow
+from backend.utils.helpers import utcnow
 from datetime import date, datetime
 from typing import Optional, Any, Dict, List
 from urllib.parse import urlparse
@@ -10,8 +10,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from services.dedup import simhash64, to_signed_64
-from services.embeddings import embed_text
+from backend.services.dedup import simhash64, to_signed_64
+from backend.pipelines.graphs.ingest_graph.state import GraphState
+from backend.services.embeddings import embed_text
 
 load_dotenv()
 
@@ -20,7 +21,7 @@ load_dotenv()
 # Title is removed as it's passed in directly.
 class ArticleNormalizationEntry(BaseModel):
     summary: str = Field(None, description="2-4 sentence neutral summary")
-    published_at: date = Field(None, description="YYYY-MM-DD")
+    published_at: date = Field(None, description="YYYY-MM-DD, if there is no year, then the current year is 2025")
     lang: Optional[str] = Field(None, description="Two-letter uppercase ISO 639-1")
 
 
@@ -28,10 +29,12 @@ class ArticleEntry(ArticleNormalizationEntry):
     # The final, complete entry still includes the title.
     title: str
     url: str
+    raw: str
     source_domain: str
     fetched_at: datetime
     hash_64: int
     content_emb: Optional[List[float]] = None
+    provider: str
 
 
 # Use a low temperature for deterministic, factual extraction.
@@ -60,6 +63,7 @@ Given the unstructured article text, return a SINGLE JSON object with EXACTLY th
 
 Your response MUST be ONLY the JSON object, with no other text, comments, or explanations.
 
+IF THERE IS NO YEAR IN TEXT OF THE NEWS, THE MONTH AND DATE
 Article to process:
 {article}
 """.strip(),
@@ -73,12 +77,14 @@ _chain = _prompt | _model.with_structured_output(
 )
 
 
-def normalize_article(state: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_article(state: GraphState) -> GraphState:
+    print(state)
     # The function now expects 'title' to be in the input state.
     url: str = state["url"]
     title: str = state["title"]
     article_text: str = state["unstructured_article"]
-
+    raw: str = state["raw"]
+    provider: str = state["provider"]
     # 1) LLM normalization (summary, published_at, lang)
     norm = _chain.invoke({"article": article_text})
 
@@ -97,6 +103,7 @@ def normalize_article(state: Dict[str, Any]) -> Dict[str, Any]:
     entry = ArticleEntry(
         url=url,
         title=title,
+        raw=raw,
         source_domain=source_domain,
         fetched_at=fetched_at,
         hash_64=hash_64,
@@ -104,6 +111,7 @@ def normalize_article(state: Dict[str, Any]) -> Dict[str, Any]:
         summary=norm.summary,
         published_at=norm.published_at,
         lang=norm.lang,
+        provider=provider
     )
 
     state["article_row"] = entry.model_dump()

@@ -8,7 +8,7 @@ load_dotenv()
 
 # Import the compiled graph
 try:
-    from pipelines.ingest_graph import graph
+    from backend.pipelines.graphs.ingest_graph.ingest_graph import graph
 except ImportError:
     print("Could not import graph from pipelines.ingest_graph")
     # Fallback for original structure
