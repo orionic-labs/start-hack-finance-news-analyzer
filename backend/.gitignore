@@ -1,2 +1,60 @@
-/.venv
-.env*
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.dll
+*.dylib
+*.pyd
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# VSCode / PyCharm / other editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS / Linux OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.out
+*.err
+
+# dotenv
+.env
+.env.*
+
+# Alembic migrations cache
+migrations/versions/__pycache__/
+migrations/*.pyc
+migrations/*.pyo
+
+# SQLite (if used locally)
+*.sqlite3
+*.db
+
+# Coverage / testing
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+.cache/
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+.eggs/
