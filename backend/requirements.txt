@@ -1,0 +1,7 @@
+langchain-openai==0.3.33
+langgraph==0.6.7
+python-dotenv==1.1.1
+reportlab==4.4.4
+matplotlib==3.9.4
+seaborn==0.13.2
+pandas==2.3.2
