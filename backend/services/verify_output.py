@@ -21,7 +21,7 @@ verify_prompt = ChatPromptTemplate.from_messages(
 You verify that the summary uses only information present in the provided sources.
 Return ONLY JSON: ok (bool), issues (string list).
 Flag if:
-- numbers or tickers appear that are not in sources
+- numbers or tickers appear that are not related to sources
 - causal claims not supported by text
 - incorrect entity names or dates
 Sources are authoritative; do not add new info.

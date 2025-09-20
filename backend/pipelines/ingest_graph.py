@@ -1,4 +1,3 @@
-# pipelines/ingest_graph.py
 from __future__ import annotations
 from typing import TypedDict, Dict, Any, List, Tuple
 
@@ -20,6 +19,7 @@ from db.types import Vector1536
 
 class GraphState(TypedDict, total=False):
     url: str
+    title: str  # <-- THIS IS THE FIX
     unstructured_article: str
     article_row: Dict[str, Any]
     insert_status: str
