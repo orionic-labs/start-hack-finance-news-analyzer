@@ -17,13 +17,18 @@ from quart import Quart, Blueprint, request, jsonify, send_file, abort, make_res
 from quart_cors import cors
 from pipelines.podcast import create_podcast
 from db.session import SessionLocal, engine, Base
+from db.models import Account, Source
+from quart import Quart
+from quart_tasks import QuartTasks
+from datetime import timedelta, timezone
 from db.models import Account, Source, Client, Allocation
 
-from security.crypto import encrypt_secret
-from scripts.general_report_generator import Customer, call_llm
-from scripts.render_report_pdf import render_report_pdf
+from backend.security.crypto import encrypt_secret
+from backend.scripts.general_report_generator import Customer, call_llm
+from backend.scripts.render_report_pdf import render_report_pdf
 from db.types import Vector1536
 import json
+from backend.pipelines.graphs.graph import graph
 
 from utils.helpers import utcnow
 
@@ -137,12 +142,12 @@ import aiosmtplib
 
 
 async def send_email_async(
-    to: str,
-    subject: str,
-    text: Union[str, None] = None,
-    html: Union[str, None] = None,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
+        to: str,
+        subject: str,
+        text: Union[str, None] = None,
+        html: Union[str, None] = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
 ):
     msg = EmailMessage()
     from_addr = os.getenv("MAIL_FROM") or os.getenv("SMTP_USER")
@@ -332,6 +337,14 @@ async def reg_podcast():
                 "answer": answer,
             }
         )
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+        return jsonify({
+            "success": True,
+            "voice": audio_base64,  # Send as base64 string
+            "text": answer,
+            "answer": answer
+        })
     except Exception as e:
         print(f"Detailed error in reg_podcast: {type(e).__name__}: {e}")
         import traceback
@@ -410,8 +423,7 @@ async def delete_account():
                 DELETE FROM accounts 
                 WHERE id = :id
                 RETURNING id
-            """
-            )
+            """)
 
             result = await session.execute(query, {"id": account_id})
             deleted_id = result.scalar_one_or_none()
@@ -633,8 +645,7 @@ async def list_sources():
                     enabled
                 FROM sources
                 ORDER BY name
-            """
-            )
+            """)
 
             result = await session.execute(query)
             rows = result.mappings().all()
@@ -1006,5 +1017,18 @@ def create_app() -> Quart:
 
 
 app = create_app()
+tasks = QuartTasks(app)
+
+
+@tasks.periodic(timedelta(seconds=800))
+async def schedule():
+    sources = [
+        "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+        "https://www.reuters.com/world/"
+    ]
+    for source in sources:
+        await graph.ainvoke({"link": source})
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5001)

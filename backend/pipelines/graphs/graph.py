@@ -31,5 +31,4 @@ builder.add_edge("Analyse Posts", "End of graph")
 builder.add_edge("End of graph", END)
 
 graph = builder.compile()
-graph.invoke({"link": "https://www.reuters.com/world/"})
 

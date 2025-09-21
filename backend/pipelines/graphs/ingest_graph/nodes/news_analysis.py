@@ -267,7 +267,9 @@ def analyze_news(
         rationale=impact_llm.rationale,
     )
 
-    importance = impact_blended.impact_score >= 60
+    importance = Importance(
+        importance=impact_blended.impact_score >= 60
+    )
 
     cites = [
         {

@@ -29,6 +29,7 @@ class ArticleEntry(ArticleNormalizationEntry):
     # The final, complete entry still includes the title.
     title: str
     url: str
+    image_url: str
     raw: str
     source_domain: str
     fetched_at: datetime
@@ -84,6 +85,7 @@ def normalize_article(state: GraphState) -> GraphState:
     title: str = state["title"]
     article_text: str = state["unstructured_article"]
     raw: str = state["raw"]
+    image_url: str = state["image_url"]
     provider: str = state["provider"]
     # 1) LLM normalization (summary, published_at, lang)
     norm = _chain.invoke({"article": article_text})
@@ -111,7 +113,8 @@ def normalize_article(state: GraphState) -> GraphState:
         summary=norm.summary,
         published_at=norm.published_at,
         lang=norm.lang,
-        provider=provider
+        provider=provider,
+        image_url=image_url,
     )
 
     state["article_row"] = entry.model_dump()

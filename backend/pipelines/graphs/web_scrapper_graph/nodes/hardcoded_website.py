@@ -56,7 +56,6 @@ def parse_reuters_news(md: str):
 
 def parse_reuters_markdown(md: str):
     news = []
-    # Находим блоки: сначала картинка (![](...)), потом ссылка с заголовком ([Title](...))
     pattern = re.compile(
         r"!\[.*?\]\((https://[^\)]+)\)\s*### \[(.+?)\]\((https://www\.reuters\.com[^\)]+)\)",
         re.DOTALL
@@ -93,7 +92,7 @@ async def main(state: InitState) -> OverallState:
         run_cfg = CrawlerRunConfig(c4a_script=script, exclude_external_links=True)
         result = await crawler.arun(url=state["link"], config=run_cfg)
         articles = parse_reuters_news(result.markdown)
-        articles = articles[:3]
+        articles = articles[:15]
         return articles
 
 

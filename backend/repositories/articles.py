@@ -6,6 +6,7 @@ from typing import Optional, Tuple, Union
 from sqlalchemy import select, desc, bindparam, cast, literal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from backend.db.session import AsyncSessionLocal
 
 from backend.db.session import SessionLocal
 from backend.db.models import Article
@@ -21,7 +22,7 @@ MAX_CANDIDATES = 2000
 TOPK_EMB = 10
 
 
-def _fetch_recent_hashes(session: Session):
+async def _fetch_recent_hashes(session: Session):
     cutoff = utcnow() - timedelta(days=LOOKBACK_DAYS)
     stmt = (
         select(Article.url, Article.hash_64)
@@ -29,13 +30,14 @@ def _fetch_recent_hashes(session: Session):
         .order_by(desc(Article.fetched_at))
         .limit(MAX_CANDIDATES)
     )
-    return session.execute(stmt).all()
+    result = await session.execute(stmt)
+    return result.all()
 
 
-def _find_near_duplicate_simhash(
+async def _find_near_duplicate_simhash(
     session: Session, new_hash: int
 ) -> Optional[Tuple[str, int]]:
-    for url, h in _fetch_recent_hashes(session):
+    for url, h in await _fetch_recent_hashes(session):
         existing = to_int(h)
         if existing is None:
             continue
@@ -47,7 +49,7 @@ def _find_near_duplicate_simhash(
     return None
 
 
-def _find_semantic_duplicate_db(
+async def _find_semantic_duplicate_db(
     session: Session, combined_text: str
 ) -> Optional[Tuple[str, float]]:
     emb = embed_text(combined_text)
@@ -68,7 +70,8 @@ def _find_semantic_duplicate_db(
         .limit(TOPK_EMB)
     )
 
-    rows = session.execute(stmt, {"emb": emb}).fetchall()
+    result = await session.execute(stmt, {"emb": emb})
+    rows = result.fetchall()
     if not rows:
         return None
     best_url, best_sim = rows[0][0], float(rows[0][1])
@@ -77,7 +80,7 @@ def _find_semantic_duplicate_db(
     return None
 
 
-def insert_article(
+async def insert_article(
     article_row: dict,
 ) -> Tuple[str, Optional[str], Optional[Union[int, float]]]:
     """
@@ -85,37 +88,35 @@ def insert_article(
       status in {"inserted", "duplicate", "semantic-duplicate", "exists"}
       metric: hamming distance (int) or similarity (float)
     """
-    session: Session = SessionLocal()
-    try:
-        # 1) SimHash near-dup
-        new_hash = to_int(article_row.get("hash_64"))
-        if new_hash is not None:
-            hit = _find_near_duplicate_simhash(session, new_hash)
-            if hit:
-                dup_url, dist = hit
-                return ("duplicate", dup_url, dist)
+    async with AsyncSessionLocal() as session:
+        try:
+            # 1) SimHash near-dup
+            new_hash = to_int(article_row.get("hash_64"))
+            if new_hash is not None:
+                hit = await _find_near_duplicate_simhash(session, new_hash)
+                if hit:
+                    dup_url, dist = hit
+                    return ("duplicate", dup_url, dist)
 
-        # 2) Semantic dup via embeddings
-        combined = (
-            f"{article_row.get('title') or ''}\n\n{article_row.get('summary') or ''}"
-        )
-        if combined.strip():
-            sem = _find_semantic_duplicate_db(session, combined)
-            if sem:
-                dup_url, sim = sem
-                return ("semantic-duplicate", dup_url, sim)
+            # 2) Semantic dup via embeddings
+            combined = (
+                f"{article_row.get('title') or ''}\n\n{article_row.get('summary') or ''}"
+            )
+            if combined.strip():
+                sem = await _find_semantic_duplicate_db(session, combined)
+                if sem:
+                    dup_url, sim = sem
+                    return ("semantic-duplicate", dup_url, sim)
 
-            # 3) Store embedding if missing
-            if "content_emb" not in article_row or article_row["content_emb"] is None:
-                article_row["content_emb"] = embed_text(combined)
+                # 3) Store embedding if missing
+                if "content_emb" not in article_row or article_row["content_emb"] is None:
+                    article_row["content_emb"] = embed_text(combined)
 
-        # 4) Insert (PK url prevents exact dup)
-        session.add(Article(**article_row))
-        session.commit()
-        return ("inserted", None, None)
+            # 4) Insert (PK url prevents exact dup)
+            await session.add(Article(**article_row))
+            await session.commit()
+            return ("inserted", None, None)
 
-    except IntegrityError:
-        session.rollback()
-        return ("exists", None, None)
-    finally:
-        session.close()
+        except IntegrityError:
+            await session.rollback()
+            return ("exists", None, None)

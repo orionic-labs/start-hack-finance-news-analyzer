@@ -18,8 +18,7 @@ DEFAULT_STYLE = (
 def get_style_guide() -> str:
     return DEFAULT_STYLE
 
-
-def get_brand_snippets(session: Session, query_text: str, k: int = 3) -> str:
+async def get_brand_snippets(session: Session, query_text: str, k: int = 3) -> str:
     """
     Optional: pull phrasing snippets from a 'brand_knowledge' table with (content TEXT, content_emb vector(1536)).
     If table not present, return empty string.
@@ -27,7 +26,7 @@ def get_brand_snippets(session: Session, query_text: str, k: int = 3) -> str:
     try:
         emb = embed_text(query_text)
         # dynamic text SQL since no model; safe with bindparam and cast
-        rows = session.execute(
+        rows = await session.execute(
             select(
                 bindparam("dummy")  # placeholder; we will switch to raw text query below if needed
             )
@@ -36,10 +35,11 @@ def get_brand_snippets(session: Session, query_text: str, k: int = 3) -> str:
         pass  # no-op; just to satisfy linters
 
     try:
-        rows = session.execute(
+        results = await session.execute(
             "SELECT content FROM brand_knowledge ORDER BY content_emb <=> CAST(:emb AS vector(1536)) LIMIT :k",
             {"emb": emb, "k": k},
-        ).fetchall()
+        )
+        rows = results.fetchall()
         return "\n".join(r[0] for r in rows) if rows else ""
     except Exception:
         return ""

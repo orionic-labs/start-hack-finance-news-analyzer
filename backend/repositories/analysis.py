@@ -6,10 +6,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 
-def insert_analysis_packet(
+async def insert_analysis_packet(
     session: Session, article_url: str, packet: Dict[str, Any], cluster_urls: list[str]
 ) -> None:
-    session.execute(
+    await session.execute(
         text(
             """
             INSERT INTO article_analysis
