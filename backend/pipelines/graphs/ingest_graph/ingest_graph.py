@@ -35,7 +35,7 @@ def node_insert(state: GraphState) -> GraphState:
 
 def route_after_insert(state: GraphState) -> str:
     # If near-duplicate by SimHash, skip analysis
-    if state.get("insert_status") == "duplicate":
+    if (state.get("insert_status") == "duplicate") or (state.get("insert_status") == "exists"):
         return "skip"
     # For new insert or semantic-duplicate, we still analyze (useful to refresh packet)
     return "analyze"

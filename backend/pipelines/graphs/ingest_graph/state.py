@@ -4,6 +4,7 @@ from typing import TypedDict, Dict, Any, List, Tuple
 
 class GraphState(TypedDict):
     url: str
+    image_url: str
     title: str  # <-- THIS IS THE FIX
     raw: str
     unstructured_article: str

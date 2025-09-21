@@ -18,6 +18,10 @@ from typing import Union, Optional
 import tempfile
 from scripts.render_report_pdf import render_report_pdf
 from scripts.general_report_generator import call_llm
+from quart_tasks import QuartTasks
+from datetime import datetime, timedelta
+from backend.pipelines.graphs.graph import graph
+
 
 # ---------- Schemas ----------
 class IngestRequest(BaseModel):
@@ -72,6 +76,7 @@ async def validate(model, data):
         return model(**(data or {}))
     except ValidationError as e:
         abort(400, description=e.json())
+
 
 async def to_thread(func, *args, **kwargs):
     return await anyio.to_thread.run_sync(lambda: func(*args, **kwargs))
@@ -278,6 +283,7 @@ async def edit_source():
 def create_app() -> Quart:
     load_dotenv()
     app = Quart(__name__)
+    tasks = QuartTasks(app)
     app = cors(app, allow_origin="*")
     app.config.update(JSON_SORT_KEYS=False)
 
@@ -301,5 +307,12 @@ def create_app() -> Quart:
     return app
 
 app = create_app()
+tasks = QuartTasks(app)
+
+@tasks.periodic(timedelta(seconds=1))
+async def schedule_news_update():
+
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5001)

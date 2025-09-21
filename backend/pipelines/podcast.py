@@ -81,10 +81,11 @@ That's your snapshot of the financial world today — equal parts chaos and come
 """
 
 
-def create_podcast(voice_id="0UusJbwWpzPDiWWzB6e8"):
+def create_podcast(voice_id="Zz6sR0uCvGT7lOt6j1uF"):
+    print(1)
     session = SessionLocal()
     texts = fetch_last_week_texts(session)
-
+    print(2)
     model = ChatOpenAI(model="gpt-4o")
 
     news =" | ".join(texts)
