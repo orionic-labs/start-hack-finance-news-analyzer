@@ -69,7 +69,7 @@ export default function Clients() {
                 setError(null);
                 const res = await api.get('/clients/list');
 
-                const mapped: Client[] = (res.data || []).map((c: any) => ({
+                const mapped: Client[] = (res.data || []).map((c) => ({
                     id: String(c.id ?? c.client_id),
                     name: c.name,
                     status: c.status ?? 'active',

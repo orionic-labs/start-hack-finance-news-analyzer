@@ -86,6 +86,19 @@ class ReportRequest(BaseModel):
     include_cover: bool = True
 
 
+class ToggleImportancePayload(BaseModel):
+    # Accept either "article_url" or "url" for convenience
+    article_url: Optional[str] = None
+    url: Optional[str] = None
+    # If omitted, the endpoint will TOGGLE the current value
+    importance: Optional[bool] = None
+
+
+class ImportancePayload(BaseModel):
+    url: str
+    important: bool | None = None  # if None: toggle current
+
+
 # ---------- Helpers ----------
 async def validate(model, data):
     try:
@@ -414,49 +427,53 @@ async def delete_account():
         return jsonify({"error": str(e)}), 500
 
 
+# ---- News list (replace your existing /news/list handler) ----
 @api.get("/news/list")
 async def list_news():
     try:
         async with SessionLocal() as session:
             query = text(
                 """
-                    SELECT 
-                        a.url as id,
-                        a.url,
-                        a.source_domain,
-                        a.title,
-                        a.summary,
-                        a.published_at,
-                        a.image_url,
-                        COALESCE(aa.impact_score, 0) as impact_score
-                    FROM articles a
-                    LEFT JOIN article_analysis aa ON a.url = aa.article_url
-                    WHERE COALESCE(aa.impact_score, 0) >= 20
-                    ORDER BY a.published_at DESC
-                    LIMIT 50
-                """
+                SELECT 
+                    a.url AS id,
+                    a.url,
+                    a.source_domain,
+                    a.title,
+                    a.summary,
+                    a.published_at,
+                    a.image_url,
+                    COALESCE(aa.impact_score, 0) AS impact_score,
+                    aa.important AS importance_flag
+                FROM articles a
+                LEFT JOIN article_analysis aa ON a.url = aa.article_url
+                WHERE COALESCE(aa.impact_score, 0) >= 20
+                ORDER BY a.published_at DESC
+                LIMIT 50
+            """
             )
-
             result = await session.execute(query)
             rows = result.mappings().all()
 
-            # Convert to list of dictionaries
-            articles = []
+            items = []
             for row in rows:
-                # Convert datetime to ISO string
                 published_at = (
                     row["published_at"].isoformat() if row["published_at"] else None
                 )
+                impact_score = row.get("impact_score", 0) or 0
 
-                # Determine importance based on impact score
-                impact_score = row.get("impact_score", 0)
-                importance = (
+                # If importance boolean is NULL, fall back to threshold (>=60)
+                db_flag = row.get("importance_flag")
+                is_important = (
+                    bool(db_flag) if db_flag is not None else (impact_score >= 60)
+                )
+
+                importance_label = (
                     "high"
                     if impact_score > 75
                     else "medium" if impact_score > 50 else "low"
                 )
 
-                articles.append(
+                items.append(
                     {
                         "id": row["id"],
                         "url": row["url"],
@@ -465,21 +482,71 @@ async def list_news():
                         "summary": row["summary"],
                         "publishedAt": published_at,
                         "photo": row.get("image_url"),
-                        "isImportant": impact_score > 75,
+                        "isImportant": is_important,  # <-- now coming from DB (or fallback)
+                        "importance": importance_label,
                         "markets": [],
                         "clients": [],
-                        "importance": importance,
                         "communitySentiment": int(min(impact_score * 1.2, 100)),
                         "trustIndex": int(min(impact_score * 1.3, 100)),
                     }
                 )
-
-            return jsonify(articles)
+            return jsonify(items)
     except Exception as e:
         print(f"Error fetching news: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to fetch news"}), 500
 
 
+@api.post("/news/importance")
+async def set_importance():
+    data = await validate(ImportancePayload, await request.get_json(force=True))
+    try:
+        async with SessionLocal() as session:
+            # Read current
+            cur = await session.execute(
+                text("SELECT important FROM article_analysis WHERE article_url = :url"),
+                {"url": data.url},
+            )
+            row = cur.mappings().first()
+
+            if row is None:
+                # If no row, set to provided value or True by default
+                new_val = True if data.important is None else bool(data.important)
+                await session.execute(
+                    text(
+                        "INSERT INTO article_analysis (article_url, important) VALUES (:url, :val)"
+                    ),
+                    {"url": data.url, "val": new_val},
+                )
+            else:
+                current = row["important"]
+                new_val = (
+                    (not bool(current))
+                    if data.important is None
+                    else bool(data.important)
+                )
+                upd = await session.execute(
+                    text(
+                        "UPDATE article_analysis SET important = :val WHERE article_url = :url"
+                    ),
+                    {"url": data.url, "val": new_val},
+                )
+                # If no row updated (edge race), insert:
+                if upd.rowcount == 0:
+                    await session.execute(
+                        text(
+                            "INSERT INTO article_analysis (article_url, important) VALUES (:url, :val)"
+                        ),
+                        {"url": data.url, "val": new_val},
+                    )
+
+            await session.commit()
+            return jsonify({"ok": True, "url": data.url, "important": new_val})
+    except Exception as e:
+        print(f"Error toggling importance: {e}")
+        return jsonify({"error": "Failed to update importance"}), 500
+
+
+# ---- News detail (replace your existing /news/detail handler) ----
 @api.get("/news/detail/<path:url>")
 async def get_news_detail(url):
     try:
@@ -487,62 +554,62 @@ async def get_news_detail(url):
             query = text(
                 """
                 SELECT 
-                    a.url as id,
+                    a.url AS id,
                     a.url,
                     a.source_domain,
                     a.title,
                     a.summary,
-                    a.raw as content,
+                    a.raw AS content,
                     a.published_at,
                     a.image_url,
-                    COALESCE(aa.impact_score, 0) as impact_score
+                    COALESCE(aa.impact_score, 0) AS impact_score,
+                    aa.important AS importance_flag
                 FROM articles a
                 LEFT JOIN article_analysis aa ON a.url = aa.article_url
                 WHERE a.url = :url
                 LIMIT 1
             """
             )
-
-            result = await session.execute(query, {"url": url})
-            row = result.mappings().first()
-
+            row = (await session.execute(query, {"url": url})).mappings().first()
             if not row:
                 return jsonify({"error": "News article not found"}), 404
 
-            # Convert datetime to ISO string
             published_at = (
                 row["published_at"].isoformat() if row["published_at"] else None
             )
+            impact_score = row.get("impact_score", 0) or 0
 
-            # Determine importance based on impact score
-            impact_score = row.get("impact_score", 0)
-            importance = (
+            db_flag = row.get("importance_flag")
+            is_important = (
+                bool(db_flag) if db_flag is not None else (impact_score >= 60)
+            )
+            importance_label = (
                 "high"
                 if impact_score > 75
                 else "medium" if impact_score > 50 else "low"
             )
 
-            article = {
-                "id": row["id"],
-                "url": row["url"],
-                "source": row["source_domain"],
-                "title": row["title"],
-                "summary": row["summary"],
-                "content": row["content"],
-                "publishedAt": published_at,
-                "photo": row.get("image_url"),
-                "isImportant": impact_score > 75,
-                "markets": [],
-                "clients": [],
-                "importance": importance,
-                "communitySentiment": int(min(impact_score * 1.2, 100)),
-                "trustIndex": int(min(impact_score * 1.3, 100)),
-            }
-
-            return jsonify(article)
+            return jsonify(
+                {
+                    "id": row["id"],
+                    "url": row["url"],
+                    "source": row["source_domain"],
+                    "title": row["title"],
+                    "summary": row["summary"],
+                    "content": row["content"],
+                    "publishedAt": published_at,
+                    "photo": row.get("image_url"),
+                    "isImportant": is_important,  # <-- DB-backed
+                    "importance": importance_label,
+                    "markets": [],
+                    "clients": [],
+                    "communitySentiment": int(min(impact_score * 1.2, 100)),
+                    "trustIndex": int(min(impact_score * 1.3, 100)),
+                }
+            )
     except Exception as e:
         print(f"Error fetching news detail: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to fetch news detail"}), 500
 
 
 # ---- Sources
