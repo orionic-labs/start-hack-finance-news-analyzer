@@ -369,7 +369,7 @@ async def send_message_chat():
         response = chatbot_graph.invoke({[HumanMessage(content=question)]})
 
         return jsonify({
-            "answer": response.content
+            "answer": response["choices"][0]["message"]["content"].
         })
     except Exception as e:
         print(f"Detailed error in send_message_chat: {type(e).__name__}: {e}")
