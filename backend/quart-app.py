@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+
+from langchain_core.messages import HumanMessage, AIMessage
 # app_quart.py
 import os
 import uuid
@@ -29,6 +31,8 @@ from backend.scripts.render_report_pdf import render_report_pdf
 from db.types import Vector1536
 import json
 from backend.pipelines.graphs.graph import graph
+from langchain_core.messages import HumanMessage, AIMessage
+from backend.pipelines.chatbot import graph as chatbot_graph
 
 from utils.helpers import utcnow
 
@@ -352,6 +356,27 @@ async def reg_podcast():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
+@api.post("/send_message_chat")
+async def send_message_chat():
+    try:
+        print("Starting podcast generation...")
+
+        # Generate podcast
+        data = await request.get_json(force=True)
+        question = data.get("customers", [])
+
+        response = chatbot_graph.invoke({[HumanMessage(content=question)]})
+
+        return jsonify({
+            "answer": response.content
+        })
+    except Exception as e:
+        print(f"Detailed error in send_message_chat: {type(e).__name__}: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 # ---- Accounts
 
@@ -1020,7 +1045,7 @@ app = create_app()
 tasks = QuartTasks(app)
 
 
-@tasks.periodic(timedelta(seconds=800))
+@tasks.periodic(timedelta(seconds=5))
 async def schedule():
     sources = [
         "https://www.cnbc.com/id/100003114/device/rss/rss.html",

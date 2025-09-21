@@ -113,7 +113,7 @@ async def insert_article(
                     article_row["content_emb"] = embed_text(combined)
 
             # 4) Insert (PK url prevents exact dup)
-            await session.add(Article(**article_row))
+            session.add(Article(**article_row))
             await session.commit()
             return ("inserted", None, None)
 
