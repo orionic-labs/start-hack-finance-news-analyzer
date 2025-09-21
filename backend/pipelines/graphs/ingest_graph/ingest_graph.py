@@ -16,6 +16,9 @@ from backend.services.rag import get_style_guide, get_brand_snippets
 from backend.services.verify_output import verify_packet
 from backend.services.embeddings import embed_text
 from backend.db.session import SessionLocal
+from backend.db.session import AsyncSessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.db.models import Article
 from backend.db.types import Vector1536
 
@@ -23,8 +26,8 @@ from backend.db.types import Vector1536
 # --- Nodes ---
 
 
-def node_insert(state: GraphState) -> GraphState:
-    status, ref_url, metric = insert_article(state["article_row"])
+async def node_insert(state: GraphState) -> GraphState:
+    status, ref_url, metric = await insert_article(state["article_row"])
     state["insert_status"] = status
     if ref_url:
         state["insert_ref_url"] = ref_url
@@ -41,10 +44,9 @@ def route_after_insert(state: GraphState) -> str:
     return "analyze"
 
 
-def node_fetch_related(state: GraphState) -> GraphState:
-    session: Session = SessionLocal()
-    try:
-        primary = session.get(Article, state["article_row"]["url"])
+async def node_fetch_related(state: GraphState) -> GraphState:
+    async with AsyncSessionLocal() as session:
+        primary = await session.get(Article, state["article_row"]["url"])
         if not primary:
             state["related_articles"] = []
             return state
@@ -53,7 +55,7 @@ def node_fetch_related(state: GraphState) -> GraphState:
             f"{primary.title or ''}\n\n{primary.summary or ''}"
         )
         dist = Article.content_emb.op("<=>")(cast(bindparam("emb"), Vector1536()))
-        rows = session.execute(
+        result = await session.execute(
             select(
                 Article.url,
                 Article.title,
@@ -66,7 +68,8 @@ def node_fetch_related(state: GraphState) -> GraphState:
             .order_by(dist)
             .limit(5),
             {"emb": emb},
-        ).fetchall()
+        )
+        rows = result.fetchall()
         related = []
         for r in rows:
             related.append(
@@ -81,20 +84,17 @@ def node_fetch_related(state: GraphState) -> GraphState:
             )
         state["related_articles"] = related
         return state
-    finally:
-        session.close()
 
 
-def node_analyze(state: GraphState) -> GraphState:
-    session: Session = SessionLocal()
-    try:
+async def node_analyze(state: GraphState) -> GraphState:
+    async with AsyncSessionLocal() as session:
         # Style and brand snippets (RAG)
         style = get_style_guide()
         qtext = f"{state['article_row'].get('title', '')} {state['article_row'].get('summary', '')}"
-        rag = get_brand_snippets(session, qtext, k=3)
+        rag = await get_brand_snippets(session, qtext, k=3)
 
         # Build primary dict from DB row for consistency
-        pr = session.get(Article, state["article_row"]["url"])
+        pr = await session.get(Article, state["article_row"]["url"])
         primary = {
             "url": pr.url,
             "title": pr.title,
@@ -108,11 +108,9 @@ def node_analyze(state: GraphState) -> GraphState:
         )
         state["analysis"] = analysis_obj.model_dump()
         return state
-    finally:
-        session.close()
 
 
-def node_verify_and_persist(state: GraphState) -> GraphState:
+async def node_verify_and_persist(state: GraphState) -> GraphState:
     # Build sources text for verification
     parts = []
     parts.append(
@@ -127,15 +125,12 @@ def node_verify_and_persist(state: GraphState) -> GraphState:
     state["verification_issues"] = ver.issues
 
     # Persist packet
-    session: Session = SessionLocal()
-    try:
+    async with AsyncSessionLocal() as session:
         cluster_urls = [x["url"] for x in state.get("related_articles", [])]
-        insert_analysis_packet(
+        await insert_analysis_packet(
             session, state["article_row"]["url"], state["analysis"], cluster_urls
         )
-        session.commit()
-    finally:
-        session.close()
+        await session.commit()
 
     return state
 

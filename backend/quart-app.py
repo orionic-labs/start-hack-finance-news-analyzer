@@ -17,15 +17,18 @@ from quart_cors import cors
 from pipelines.podcast import create_podcast
 from db.session import SessionLocal, engine, Base
 from db.models import Account, Source
+from quart import Quart
+from quart_tasks import QuartTasks
+from datetime import timedelta, timezone
 
-from security.crypto import encrypt_secret
-from scripts.general_report_generator import Customer, call_llm
-from scripts.render_report_pdf import render_report_pdf
+from backend.security.crypto import encrypt_secret
+from backend.scripts.general_report_generator import Customer, call_llm
+from backend.scripts.render_report_pdf import render_report_pdf
 from db.types import Vector1536
 import json
+from backend.pipelines.graphs.graph import graph
 
 from utils.helpers import utcnow
-
 
 
 # ---------- Schemas ----------
@@ -35,14 +38,17 @@ class IngestRequest(BaseModel):
     source_urls: list[str] = Field(min_items=1)
     deduplicate: bool = True
 
+
 class AnalyzeNewsRequest(BaseModel):
     title: str
     text: str
     language: str = "en"
 
+
 class RagQueryRequest(BaseModel):
     query: str = Field(min_length=2)
     top_k: int = 5
+
 
 class SendEmailRequest(BaseModel):
     to: EmailStr
@@ -52,6 +58,7 @@ class SendEmailRequest(BaseModel):
     cc: list[EmailStr] = []
     bcc: list[EmailStr] = []
 
+
 # MVP CRUD-ish payloads
 class AccountPayload(BaseModel):
     id: Optional[str] = None
@@ -59,15 +66,18 @@ class AccountPayload(BaseModel):
     username: str
     password: str
 
+
 class ClientPayload(BaseModel):
     id: Optional[str] = None
     name: str
     email: EmailStr
 
+
 class SourcePayload(BaseModel):
     id: Optional[str] = None
     name: str
     url: str
+
 
 class ReportRequest(BaseModel):
     body: str
@@ -77,6 +87,8 @@ class ReportRequest(BaseModel):
     report_date: Optional[str] = None
     logo_path: Optional[str] = None
     include_cover: bool = True
+
+
 # ---------- Helpers ----------
 async def validate(model, data):
     try:
@@ -84,29 +96,35 @@ async def validate(model, data):
     except ValidationError as e:
         abort(400, description=e.json())
 
+
 async def to_thread(func, *args, **kwargs):
     return await anyio.to_thread.run_sync(lambda: func(*args, **kwargs))
+
 
 # ---------- (TEMP) Service stubs ----------
 def run_ingest_sync(urls: list[str], dedup: bool = True):
     return {"ingested": len(urls), "deduplicated": dedup}
 
+
 async def analyze_article_async(title: str, text: str, language: str = "en"):
     return {"sentiment": "neutral", "language": language, "title_len": len(title), "text_len": len(text)}
+
 
 def answer_query_sync(query: str, top_k: int = 5):
     return {"answer": f"Stub answer for: {query}", "sources": [{"title": "Example", "url": "https://example.com"}]}
 
+
 # ---------- Email ----------
 import aiosmtplib
 
+
 async def send_email_async(
-    to: str,
-    subject: str,
-    text: Union[str, None] = None,
-    html: Union[str, None] = None,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
+        to: str,
+        subject: str,
+        text: Union[str, None] = None,
+        html: Union[str, None] = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
 ):
     msg = EmailMessage()
     from_addr = os.getenv("MAIL_FROM") or os.getenv("SMTP_USER")
@@ -139,18 +157,22 @@ async def send_email_async(
         start_tls=True,
     )
 
+
 # ---------- Blueprint / Routes ----------
 api = Blueprint("api", __name__)
+
 
 @api.get("/health")
 async def health():
     return {"status": "ok"}
+
 
 @api.post("/news/send_to_chat")
 async def send_to_chat():
     payload = await validate(AnalyzeNewsRequest, await request.get_json(force=True))
     result = await analyze_article_async(payload.title, payload.text, payload.language)
     return jsonify(result)
+
 
 @api.post("/reports/send_email")
 async def send_email():
@@ -165,11 +187,12 @@ async def send_email():
     )
     return jsonify({"ok": True, "message": "Email accepted for delivery"}), 202
 
+
 @api.post("/reports/download_pdf")
 async def download_pdf():
     try:
         data = await request.get_json(force=True)
-        
+
         # Extract data from request
         customers_data = data.get("customers", [])
         text = data.get("text", data.get("body", ""))
@@ -211,6 +234,7 @@ async def download_pdf():
                     )
                     with open(out_path, "rb") as f:
                         return f.read()
+
             return await anyio.to_thread.run_sync(work)
 
         pdf_bytes = await _render_to_tmp()
@@ -224,6 +248,8 @@ async def download_pdf():
     except Exception as e:
         print(f"Error in download_pdf: {e}")
         return jsonify({"error": str(e)}), 500
+
+
 @api.post("/reports/regenerate")
 async def reg_report():
     try:
@@ -264,18 +290,19 @@ async def reg_report():
         print(f"Error in reg_report: {e}")
         return jsonify({"error": str(e)}), 500
 
+
 @api.post("/podcasts/regenerate")
 async def reg_podcast():
     try:
         print("Starting podcast generation...")
-        
+
         # Generate podcast
         audio_bytes, answer = await create_podcast()
-        
+
         # Convert binary data to base64 for JSON serialization
         import base64
         audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-        
+
         return jsonify({
             "success": True,
             "voice": audio_base64,  # Send as base64 string
@@ -287,6 +314,8 @@ async def reg_podcast():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
 # ---- Accounts
 
 # ---- Accounts
@@ -304,10 +333,10 @@ async def list_accounts():
                 FROM accounts
                 ORDER BY created_at DESC
             """)
-            
+
             result = await session.execute(query)
             rows = result.mappings().all()
-            
+
             accounts = []
             for row in rows:
                 # Format created_at as "X hours ago"
@@ -318,7 +347,7 @@ async def list_accounts():
                     last_sync = f"{hours_ago} hours ago" if hours_ago > 0 else "Just now"
                 else:
                     last_sync = "Never"
-                
+
                 accounts.append({
                     "id": str(row['id']),
                     "platform": row['platform'],
@@ -328,12 +357,11 @@ async def list_accounts():
                     "status": "active",  # Default status
                     "mediaSource": row['platform']  # Use platform as media source
                 })
-            
+
             return jsonify(accounts)
     except Exception as e:
         print(f"Error fetching accounts: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 
 @api.post("/accounts/delete")
@@ -341,29 +369,31 @@ async def delete_account():
     try:
         data = await request.get_json(force=True)
         account_id = data.get('id')
-        
+
         if not account_id:
             return jsonify({"error": "Account ID is required"}), 400
-        
+
         async with SessionLocal() as session:
             query = text("""
                 DELETE FROM accounts 
                 WHERE id = :id
                 RETURNING id
             """)
-            
+
             result = await session.execute(query, {"id": account_id})
             deleted_id = result.scalar_one_or_none()
-            
+
             if not deleted_id:
                 return jsonify({"error": "Account not found"}), 404
-                
+
             await session.commit()
-            
+
             return jsonify({"ok": True, "deleted_id": str(deleted_id)}), 200
     except Exception as e:
         print(f"Error deleting account: {e}")
         return jsonify({"error": str(e)}), 500
+
+
 @api.get("/news/list")
 async def list_news():
     try:
@@ -384,20 +414,20 @@ async def list_news():
                     ORDER BY a.published_at DESC
                     LIMIT 50
                 """)
-            
+
             result = await session.execute(query)
             rows = result.mappings().all()
-            
+
             # Convert to list of dictionaries
             articles = []
             for row in rows:
                 # Convert datetime to ISO string
                 published_at = row['published_at'].isoformat() if row['published_at'] else None
-                
+
                 # Determine importance based on impact score
                 impact_score = row.get('impact_score', 0)
                 importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
-                
+
                 articles.append({
                     "id": row['id'],
                     "url": row['url'],
@@ -405,7 +435,7 @@ async def list_news():
                     "title": row['title'],
                     "summary": row['summary'],
                     "publishedAt": published_at,
-                    "photo": row.get('image_url'),  
+                    "photo": row.get('image_url'),
                     "isImportant": impact_score > 75,
                     "markets": [],
                     "clients": [],
@@ -413,11 +443,13 @@ async def list_news():
                     "communitySentiment": int(min(impact_score * 1.2, 100)),
                     "trustIndex": int(min(impact_score * 1.3, 100)),
                 })
-            
+
             return jsonify(articles)
     except Exception as e:
         print(f"Error fetching news: {e}")
         return jsonify({"error": str(e)}), 500
+
+
 @api.get("/news/detail/<path:url>")
 async def get_news_detail(url):
     try:
@@ -438,20 +470,20 @@ async def get_news_detail(url):
                 WHERE a.url = :url
                 LIMIT 1
             """)
-            
+
             result = await session.execute(query, {"url": url})
             row = result.mappings().first()
-            
+
             if not row:
                 return jsonify({"error": "News article not found"}), 404
-                
+
             # Convert datetime to ISO string
             published_at = row['published_at'].isoformat() if row['published_at'] else None
-            
+
             # Determine importance based on impact score
             impact_score = row.get('impact_score', 0)
             importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
-            
+
             article = {
                 "id": row['id'],
                 "url": row['url'],
@@ -468,12 +500,13 @@ async def get_news_detail(url):
                 "communitySentiment": int(min(impact_score * 1.2, 100)),
                 "trustIndex": int(min(impact_score * 1.3, 100)),
             }
-            
+
             return jsonify(article)
     except Exception as e:
         print(f"Error fetching news detail: {e}")
         return jsonify({"error": str(e)}), 500
-    
+
+
 # ---- Sources
 @api.get("/sources/list")
 async def list_sources():
@@ -495,10 +528,10 @@ async def list_sources():
                 FROM sources
                 ORDER BY name
             """)
-            
+
             result = await session.execute(query)
             rows = result.mappings().all()
-            
+
             sources = []
             for row in rows:
                 # Format last_update as "X hours ago"
@@ -509,7 +542,7 @@ async def list_sources():
                     last_update_str = f"{hours_ago} hours ago"
                 else:
                     last_update_str = "Never"
-                
+
                 # Parse keywords from JSON string
                 keywords_str = row.get('keywords')
                 keywords = []
@@ -518,7 +551,7 @@ async def list_sources():
                         keywords = json.loads(keywords_str)
                     except:
                         pass
-                
+
                 sources.append({
                     "id": str(row['id']),
                     "name": row['name'],
@@ -532,23 +565,25 @@ async def list_sources():
                     "keywords": keywords,
                     "enabled": bool(row['enabled'])
                 })
-            
+
             return jsonify(sources)
     except Exception as e:
         print(f"Error fetching sources: {e}")
         return jsonify({"error": str(e)}), 500
+
+
 @api.post("/accounts/add")
 async def add_account():
     try:
         data = await request.get_json(force=True)
-        
+
         # Validate required fields
         if not all([data.get('platform'), data.get('link'), data.get('username'), data.get('password')]):
             return jsonify({"error": "Platform, link, username, and password are required"}), 400
-        
+
         # Encrypt the password
         password_enc = encrypt_secret(data.get('password'))
-        
+
         async with SessionLocal() as session:
             query = text("""
                 INSERT INTO accounts 
@@ -556,9 +591,9 @@ async def add_account():
                 VALUES (:id, :platform, :link, :username, :password_enc, :created_at)
                 RETURNING id
             """)
-            
+
             result = await session.execute(
-                query, 
+                query,
                 {
                     "id": str(uuid.uuid4()),
                     "platform": data.get('platform'),
@@ -568,27 +603,29 @@ async def add_account():
                     "created_at": datetime.utcnow()
                 }
             )
-            
+
             inserted_id = result.scalar_one()
             await session.commit()
-            
+
             return jsonify({"ok": True, "id": str(inserted_id)}), 201
     except Exception as e:
         print(f"Error adding account: {e}")
         return jsonify({"error": str(e)}), 500
+
+
 @api.post("/sources/add")
 async def add_source():
     try:
         data = await request.get_json(force=True)
-        
+
         # Validate required fields
         if not data.get('name') or not data.get('url'):
             return jsonify({"error": "Name and URL are required"}), 400
-            
+
         # Format keywords as JSON string
         keywords = data.get('keywords', [])
         keywords_json = json.dumps(keywords) if keywords else None
-        
+
         async with SessionLocal() as session:
             query = text("""
                 INSERT INTO sources 
@@ -596,9 +633,9 @@ async def add_source():
                 VALUES (:id, :name, :url, :category, :description, :status, :articles_per_day, :reliability, :keywords, :enabled)
                 RETURNING id
             """)
-            
+
             result = await session.execute(
-                query, 
+                query,
                 {
                     "id": str(uuid.uuid4()),
                     "name": data.get('name'),
@@ -612,19 +649,22 @@ async def add_source():
                     "enabled": data.get('enabled', True)
                 }
             )
-            
+
             inserted_id = result.scalar_one()
             await session.commit()
-            
+
             return jsonify({"ok": True, "id": str(inserted_id)}), 201
     except Exception as e:
         print(f"Error adding source: {e}")
         return jsonify({"error": str(e)}), 500
+
+
 # ---- Clients
 @api.post("/clients/add_client")
 async def add_client():
     payload = await validate(ClientPayload, await request.get_json(force=True))
     return jsonify({"ok": True, "client": payload.model_dump()}), 201
+
 
 @api.post("/clients/edit_client")
 async def edit_client():
@@ -632,19 +672,18 @@ async def edit_client():
     return jsonify({"ok": True, "client": payload.model_dump()}), 200
 
 
-
 # ---------- App factory ----------
 def create_app() -> Quart:
     load_dotenv()
     app = Quart(__name__)
     app = cors(
-        app, 
+        app,
         allow_origin=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
         allow_credentials=True
     )
-    
+
     app.config.update(JSON_SORT_KEYS=False)
 
     from werkzeug.exceptions import HTTPException
@@ -656,7 +695,7 @@ def create_app() -> Quart:
     async def unhandled(e: Exception):
         app.logger.exception("Unhandled error")
         return jsonify({"error": "Internal Server Error"}), 500
-    
+
     @app.before_serving
     async def init_db():
         # MVP: ensure tables exist (use Alembic later in prod)
@@ -666,6 +705,15 @@ def create_app() -> Quart:
     app.register_blueprint(api, url_prefix="/api")
     return app
 
+
 app = create_app()
+tasks = QuartTasks(app)
+
+
+@tasks.periodic(timedelta(seconds=60))
+async def schedule():
+    await graph.ainvoke({"link": "https://www.cnbc.com/id/100003114/device/rss/rss.html"})
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5001)

@@ -90,5 +90,3 @@ async def main(state: InitState) -> OverallState:
 def get_posts_hardcoded_ft(state: InitState) -> OverallState:
     result = asyncio.run(main(state))
     return {"articles": result, "article_index": 0}
-
-print(get_posts_hardcoded_ft({"link": "https://www.cnbc.com/2025/09/20/trump-h-1b-visa-tech-foreign-governments.html"}))

@@ -13,17 +13,15 @@ def get_cnbc_articles_with_images(state: InitState):
     feed = feedparser.parse(state["link"])
     articles = []
 
-    for entry in feed.entries[:10]:
+    for entry in feed.entries[:3]:
         title = entry.title
         link = entry.link
 
-        # Загружаем саму страницу статьи
         try:
             resp = requests.get(link, headers={"User-Agent": "Mozilla/5.0"})
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Пытаемся достать og:image
             og_img = soup.find("meta", property="og:image")
             image_url = og_img["content"] if og_img else None
         except Exception as e:

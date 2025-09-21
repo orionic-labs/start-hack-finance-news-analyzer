@@ -56,7 +56,6 @@ def parse_reuters_news(md: str):
 
 def parse_reuters_markdown(md: str):
     news = []
-    # Находим блоки: сначала картинка (![](...)), потом ссылка с заголовком ([Title](...))
     pattern = re.compile(
         r"!\[.*?\]\((https://[^\)]+)\)\s*### \[(.+?)\]\((https://www\.reuters\.com[^\)]+)\)",
         re.DOTALL

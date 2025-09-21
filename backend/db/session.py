@@ -13,3 +13,4 @@ engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine, expire_on_commit=False
 )
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
