@@ -1,5 +1,5 @@
 // src/pages/News.tsx
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '@/lib/axios';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -74,6 +74,17 @@ type NewsItemProps = {
     onToggleImportant: (n: News) => Promise<void>;
     onUpdateNewsLocal: (id: string, updated: Partial<News>) => void;
 };
+
+type ChatMessage = {
+    id: string;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+};
+
+function uid() {
+    // Stable UID across modern browsers; falls back for older ones
+    return (crypto as any)?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
 
 function formatTime(ts: string | null) {
     if (!ts) return '—';
@@ -250,8 +261,15 @@ export default function News() {
     const [newsData, setNewsData] = useState<News[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [chatMessage, setChatMessage] = useState('');
     const [togglingId, setTogglingId] = useState<string | null>(null);
+
+    // --- Chat state ---
+    const [chatMessage, setChatMessage] = useState('');
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+        { id: uid(), role: 'system', content: 'Welcome! Ask me anything about the news items.' },
+    ]);
+    const [chatLoading, setChatLoading] = useState(false);
+    const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
     // Fetch news (and normalize isImportant)
     useEffect(() => {
@@ -263,7 +281,7 @@ export default function News() {
                 const { data } = await api.get<News[]>('/news/list');
                 if (!mounted) return;
 
-                const normalizeBool = (v): boolean => {
+                const normalizeBool = (v: any): boolean => {
                     if (typeof v === 'boolean') return v;
                     if (typeof v === 'number') return v !== 0;
                     if (typeof v === 'string') return ['true', 't', '1', 'yes', 'y'].includes(v.toLowerCase());
@@ -271,9 +289,7 @@ export default function News() {
                 };
 
                 const mapped = (Array.isArray(data) ? data : []).map((d: any) => {
-                    // accept multiple possible backend field names just in case
                     const raw = d?.isImportant ?? d?.importance_flag ?? d?.importanceFlag ?? d?.important ?? null;
-
                     return {
                         ...d,
                         isImportant: normalizeBool(raw),
@@ -283,7 +299,7 @@ export default function News() {
                 });
 
                 setNewsData(mapped);
-            } catch (e) {
+            } catch (e: any) {
                 setError(e?.response?.data?.error || e?.message || 'Failed to fetch news');
             } finally {
                 if (mounted) setIsLoading(false);
@@ -300,7 +316,7 @@ export default function News() {
             setTogglingId(n.id);
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: !it.isImportant } : it)));
             await api.post('/news/importance', { url: n.url }); // server toggles
-        } catch (e) {
+        } catch (e: any) {
             // rollback on fail
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: n.isImportant } : it)));
             setError(e?.response?.data?.error || e?.message || 'Failed to toggle importance');
@@ -325,10 +341,37 @@ export default function News() {
         return newsData;
     }, [newsData, filterImportance]);
 
-    const handleChatSubmit = (e: React.FormEvent) => {
+    // Auto-scroll chat to bottom on new messages
+    useEffect(() => {
+        if (chatScrollRef.current) {
+            chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+        }
+    }, [chatMessages, chatLoading]);
+
+    // Send message to backend LLM endpoint WITHOUT changing it:
+    // the endpoint expects: { customers: <string> } and returns { answer: <string> }
+    const handleChatSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!chatMessage.trim()) return;
+        const msg = chatMessage.trim();
+        if (!msg || chatLoading) return;
+
+        const userMsg: ChatMessage = { id: uid(), role: 'user', content: msg };
+        setChatMessages((prev) => [...prev, userMsg]);
         setChatMessage('');
+        setChatLoading(true);
+
+        try {
+            const { data } = await api.post('/send_message_chat', { customers: msg });
+            const answer: string = typeof data?.answer === 'string' ? data.answer : 'Sorry, I could not generate an answer.';
+            const botMsg: ChatMessage = { id: uid(), role: 'assistant', content: answer };
+            setChatMessages((prev) => [...prev, botMsg]);
+        } catch (err: any) {
+            const message = err?.response?.data?.error || err?.message || 'Failed to contact the assistant.';
+            const botMsg: ChatMessage = { id: uid(), role: 'assistant', content: `Error: ${message}` };
+            setChatMessages((prev) => [...prev, botMsg]);
+        } finally {
+            setChatLoading(false);
+        }
     };
 
     return (
@@ -390,9 +433,29 @@ export default function News() {
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        <div className="h-96 bg-muted/30 rounded-lg p-4 overflow-y-auto">
-                            <p className="text-sm text-muted-foreground">Welcome! Ask me anything about the news items.</p>
+                        <div ref={chatScrollRef} className="h-96 bg-muted/30 rounded-lg p-4 overflow-y-auto space-y-3">
+                            {chatMessages.map((m) => (
+                                <div
+                                    key={m.id}
+                                    className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                                        m.role === 'user'
+                                            ? 'ml-auto bg-primary text-primary-foreground'
+                                            : m.role === 'assistant'
+                                            ? 'mr-auto bg-white border'
+                                            : 'mx-auto text-muted-foreground italic'
+                                    }`}
+                                >
+                                    {m.content}
+                                </div>
+                            ))}
+
+                            {chatLoading && (
+                                <div className="mr-auto inline-flex items-center gap-2 text-muted-foreground text-sm">
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Thinking…
+                                </div>
+                            )}
                         </div>
+
                         <form onSubmit={handleChatSubmit} className="flex gap-2">
                             <Textarea
                                 value={chatMessage}
@@ -401,7 +464,7 @@ export default function News() {
                                 className="flex-1 resize-none"
                                 rows={1}
                             />
-                            <Button type="submit" disabled={!chatMessage.trim()}>
+                            <Button type="submit" disabled={!chatMessage.trim() || chatLoading}>
                                 <Send className="w-4 h-4" />
                             </Button>
                         </form>
