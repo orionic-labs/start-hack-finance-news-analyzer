@@ -13,7 +13,7 @@ Usage:
 """
 import os, sys, pathlib
 sys.path.append(str(pathlib.Path(__file__).resolve().parent))
-
+from openai import AsyncOpenAI
 import os
 from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass, field
@@ -190,16 +190,17 @@ Bitte schreibe den vollständigen Bericht gemäß den Formatvorgaben.
 """
 
 load_dotenv()
-def call_llm(article: str, customers: List[Customer], model: str = "gpt-4o-mini", temperature: float = 0.2) -> str:
+async def call_llm(article: str, customers: List[Customer], model: str = "gpt-4o-mini", temperature: float = 0.2) -> str:
     """
     Calls the OpenAI chat model and returns the Markdown report text.
     """
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     # Normalize portfolios first
     norm_customers, notes = normalize_customers(customers)
     user_prompt = build_user_prompt(article, norm_customers, notes)
 
-    resp = client.chat.completions.create(
+    # Use the async client
+    resp = await client.chat.completions.create(  # Note: acreate for async
         model=model,
         temperature=temperature,
         messages=[

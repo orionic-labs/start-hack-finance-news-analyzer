@@ -24,4 +24,3 @@ class Article(Base):
     hash_64 = Column(Numeric, nullable=True)
     content_emb = Column(Vector1536)
     provider = Column(String, nullable=True)
-    image_url = Column(String, nullable=True)

@@ -1,29 +1,36 @@
 from __future__ import annotations
 # app_quart.py
 import os
+import uuid
 import io
 import anyio
-from email.message import EmailMessage
-from db.session import SessionLocal, engine, Base
-from db.models import Account
-from security.crypto import encrypt_secret
-from pydantic import ValidationError
 import asyncio
-from quart import Quart, Blueprint, request, jsonify, send_file, abort
-from quart_cors import cors
-from pydantic import BaseModel, Field, ValidationError, EmailStr
-from dotenv import load_dotenv
-from typing import Union, Optional
-# imports you need at top of app_quart.py
 import tempfile
+from datetime import datetime
+from email.message import EmailMessage
+from typing import Union, Optional
+from sqlalchemy import Column, String, DateTime, Numeric, text
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, ValidationError, EmailStr
+from quart import Quart, Blueprint, request, jsonify, send_file, abort, make_response
+from quart_cors import cors
+from pipelines.podcast import create_podcast
+from db.session import SessionLocal, engine, Base
+from db.models import Account, Source
+
+from security.crypto import encrypt_secret
+from scripts.general_report_generator import Customer, call_llm
 from scripts.render_report_pdf import render_report_pdf
-from scripts.general_report_generator import call_llm
-from quart_tasks import QuartTasks
-from datetime import datetime, timedelta
-from backend.pipelines.graphs.graph import graph
+from db.types import Vector1536
+import json
+
+from utils.helpers import utcnow
+
 
 
 # ---------- Schemas ----------
+
+
 class IngestRequest(BaseModel):
     source_urls: list[str] = Field(min_items=1)
     deduplicate: bool = True
@@ -76,7 +83,6 @@ async def validate(model, data):
         return model(**(data or {}))
     except ValidationError as e:
         abort(400, description=e.json())
-
 
 async def to_thread(func, *args, **kwargs):
     return await anyio.to_thread.run_sync(lambda: func(*args, **kwargs))
@@ -161,102 +167,459 @@ async def send_email():
 
 @api.post("/reports/download_pdf")
 async def download_pdf():
-    # validate() is your existing helper
-    payload = await validate(ReportRequest, await request.get_json(force=True))
-
-    # Render to a temp file in a worker thread (non-blocking for Quart)
-    async def _render_to_tmp() -> bytes:
-        def work() -> bytes:
-            with tempfile.TemporaryDirectory() as tmp:
-                out_path = os.path.join(tmp, payload.filename)
-                render_report_pdf(
-                    payload.body,
-                    out_path,
-                    company=payload.company,
-                    report_title=payload.report_title,
-                    report_date=payload.report_date,
-                    logo_path=payload.logo_path,
-                    include_cover=payload.include_cover,
-                )
-                with open(out_path, "rb") as f:
-                    return f.read()
-        return await anyio.to_thread.run_sync(work)
-
     try:
+        data = await request.get_json(force=True)
+        
+        # Extract data from request
+        customers_data = data.get("customers", [])
+        text = data.get("text", data.get("body", ""))
+        filename = data.get("filename", "financial_report.pdf")
+        company = data.get("company", "Your Company Name")
+        report_title = data.get("report_title", "Financial Report")
+        report_date = data.get("report_date", datetime.utcnow().strftime("%Y-%m-%d"))
+        logo_path = data.get("logo_path")
+        include_cover = data.get("include_cover", True)
+
+        if not text:
+            return jsonify({"error": "Text content is required"}), 400
+
+        # Convert customers data to Customer objects
+        customers = [
+            Customer(
+                name=c.get("name", ""),
+                portfolio=c.get("portfolio", {}),
+                notes=c.get("notes", "")
+            )
+            for c in customers_data
+        ]
+
+        # Generate the report using general_report_generator
+        generated_report = await call_llm(text, customers, "gpt-4o-mini", 0.25)
+
+        async def _render_to_tmp() -> bytes:
+            def work() -> bytes:
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_path = os.path.join(tmp, filename)
+                    render_report_pdf(
+                        generated_report,
+                        out_path,
+                        company=company,
+                        report_title=report_title,
+                        report_date=report_date,
+                        logo_path=logo_path,
+                        include_cover=include_cover,
+                    )
+                    with open(out_path, "rb") as f:
+                        return f.read()
+            return await anyio.to_thread.run_sync(work)
+
         pdf_bytes = await _render_to_tmp()
-    except FileNotFoundError as e:
-        # e.g., missing logo file path
-        abort(400, description=f"Asset missing: {e}")
-    except Exception:
-        abort(501, description="PDF generator unavailable")
 
-    return await send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=payload.filename,
-    )
+        # Create response with proper headers
+        response = await make_response(pdf_bytes)
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
 
-
+    except Exception as e:
+        print(f"Error in download_pdf: {e}")
+        return jsonify({"error": str(e)}), 500
 @api.post("/reports/regenerate")
 async def reg_report():
-    payload = await validate(RagQueryRequest, await request.get_json(force=True))
-    return "News text"
+    try:
+        data = await request.get_json(force=True)
+
+        customers_data = data.get("customers", [])
+        text = data.get("text")
+
+        if not text:
+            return jsonify({"error": "Text is required"}), 400
+
+        customers = [
+            Customer(
+                name=c.get("name", ""),
+                portfolio=c.get("portfolio", {}),
+                notes=c.get("notes", "")
+            )
+            for c in customers_data
+        ]
+
+        # --- FIX START ---
+        # If call_llm is async:
+        generated_report = await call_llm(text, customers, "gpt-4o-mini", 0.25)
+
+        # If call_llm is sync:
+        # generated_report = await anyio.to_thread.run_sync(
+        #     call_llm, text, customers, "gpt-4o-mini", 0.25
+        # )
+        # --- FIX END ---
+
+        return jsonify({
+            "success": True,
+            "generatedReport": generated_report,
+            "processedAt": datetime.utcnow().isoformat()
+        })
+
+    except Exception as e:
+        print(f"Error in reg_report: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @api.post("/podcasts/regenerate")
 async def reg_podcast():
-    payload = await validate(RagQueryRequest, await request.get_json(force=True))
-    out = await to_thread(answer_query_sync, payload.query, payload.top_k)
-    return jsonify({"answer": out.get("answer", ""), "sources": out.get("sources", [])})
+    try:
+        print("Starting podcast generation...")
+        
+        # Generate podcast
+        audio_bytes, answer = await create_podcast()
+        
+        # Convert binary data to base64 for JSON serialization
+        import base64
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        
+        return jsonify({
+            "success": True,
+            "voice": audio_base64,  # Send as base64 string
+            "text": answer,
+            "answer": answer
+        })
+    except Exception as e:
+        print(f"Detailed error in reg_podcast: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+# ---- Accounts
 
 # ---- Accounts
-@api.post("/accounts/add_account")
-async def add_account():
-    data = await request.get_json(force=True)
+@api.get("/accounts/list")
+async def list_accounts():
     try:
-        payload = AccountCreate(**data)
-    except ValidationError as e:
-        abort(400, description=e.json())
+        async with SessionLocal() as session:
+            query = text("""
+                SELECT 
+                    id,
+                    platform,
+                    link,
+                    username,
+                    created_at
+                FROM accounts
+                ORDER BY created_at DESC
+            """)
+            
+            result = await session.execute(query)
+            rows = result.mappings().all()
+            
+            accounts = []
+            for row in rows:
+                # Format created_at as "X hours ago"
+                created_at = row.get('created_at')
+                if created_at:
+                    time_diff = datetime.now(timezone.utc) - created_at
+                    hours_ago = int(time_diff.total_seconds() / 3600)
+                    last_sync = f"{hours_ago} hours ago" if hours_ago > 0 else "Just now"
+                else:
+                    last_sync = "Never"
+                
+                accounts.append({
+                    "id": str(row['id']),
+                    "platform": row['platform'],
+                    "link": row['link'],
+                    "username": row['username'],
+                    "lastSync": last_sync,
+                    "status": "active",  # Default status
+                    "mediaSource": row['platform']  # Use platform as media source
+                })
+            
+            return jsonify(accounts)
+    except Exception as e:
+        print(f"Error fetching accounts: {e}")
+        return jsonify({"error": str(e)}), 500
 
-    # Encrypt the password
-    password_enc = encrypt_secret(payload.password)
 
-    # Persist
-    async with SessionLocal() as session:
-        acct = Account(
-            platform=payload.platform,
-            link=str(payload.link),
-            username=payload.username,
-            password_enc=password_enc,
-        )
-        session.add(acct)
-        await session.commit()
-        await session.refresh(acct)
 
-    # Return safe data only
-    out = AccountOut(
-        id=str(acct.id),
-        platform=acct.platform,
-        link=acct.link,
-        username=acct.username,
-    )
-    return jsonify(out.model_dump()), 201
-
-@api.post("/accounts/edit_account")
-async def edit_account():
-    payload = await validate(AccountPayload, await request.get_json(force=True))
-    # TODO: update DB by payload.id
-    return jsonify({"ok": True, "account": payload.model_dump()}), 200
-
-@api.post("/accounts/delete_account")
+@api.post("/accounts/delete")
 async def delete_account():
-    body = await request.get_json(force=True)
-    account_id = (body or {}).get("id")
-    if not account_id:
-        abort(400, description='{"error":"id is required"}')
-    # TODO: delete in DB
-    return jsonify({"ok": True, "deleted_id": account_id}), 200
-
+    try:
+        data = await request.get_json(force=True)
+        account_id = data.get('id')
+        
+        if not account_id:
+            return jsonify({"error": "Account ID is required"}), 400
+        
+        async with SessionLocal() as session:
+            query = text("""
+                DELETE FROM accounts 
+                WHERE id = :id
+                RETURNING id
+            """)
+            
+            result = await session.execute(query, {"id": account_id})
+            deleted_id = result.scalar_one_or_none()
+            
+            if not deleted_id:
+                return jsonify({"error": "Account not found"}), 404
+                
+            await session.commit()
+            
+            return jsonify({"ok": True, "deleted_id": str(deleted_id)}), 200
+    except Exception as e:
+        print(f"Error deleting account: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.get("/news/list")
+async def list_news():
+    try:
+        async with SessionLocal() as session:
+            query = text("""
+                    SELECT 
+                        a.url as id,
+                        a.url,
+                        a.source_domain,
+                        a.title,
+                        a.summary,
+                        a.published_at,
+                        a.image_url,
+                        COALESCE(aa.impact_score, 0) as impact_score
+                    FROM articles a
+                    LEFT JOIN article_analysis aa ON a.url = aa.article_url
+                    WHERE COALESCE(aa.impact_score, 0) >= 20
+                    ORDER BY a.published_at DESC
+                    LIMIT 50
+                """)
+            
+            result = await session.execute(query)
+            rows = result.mappings().all()
+            
+            # Convert to list of dictionaries
+            articles = []
+            for row in rows:
+                # Convert datetime to ISO string
+                published_at = row['published_at'].isoformat() if row['published_at'] else None
+                
+                # Determine importance based on impact score
+                impact_score = row.get('impact_score', 0)
+                importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
+                
+                articles.append({
+                    "id": row['id'],
+                    "url": row['url'],
+                    "source": row['source_domain'],
+                    "title": row['title'],
+                    "summary": row['summary'],
+                    "publishedAt": published_at,
+                    "photo": row.get('image_url'),  
+                    "isImportant": impact_score > 75,
+                    "markets": [],
+                    "clients": [],
+                    "importance": importance,
+                    "communitySentiment": int(min(impact_score * 1.2, 100)),
+                    "trustIndex": int(min(impact_score * 1.3, 100)),
+                })
+            
+            return jsonify(articles)
+    except Exception as e:
+        print(f"Error fetching news: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.get("/news/detail/<path:url>")
+async def get_news_detail(url):
+    try:
+        async with SessionLocal() as session:
+            query = text("""
+                SELECT 
+                    a.url as id,
+                    a.url,
+                    a.source_domain,
+                    a.title,
+                    a.summary,
+                    a.raw as content,
+                    a.published_at,
+                    a.image_url,
+                    COALESCE(aa.impact_score, 0) as impact_score
+                FROM articles a
+                LEFT JOIN article_analysis aa ON a.url = aa.article_url
+                WHERE a.url = :url
+                LIMIT 1
+            """)
+            
+            result = await session.execute(query, {"url": url})
+            row = result.mappings().first()
+            
+            if not row:
+                return jsonify({"error": "News article not found"}), 404
+                
+            # Convert datetime to ISO string
+            published_at = row['published_at'].isoformat() if row['published_at'] else None
+            
+            # Determine importance based on impact score
+            impact_score = row.get('impact_score', 0)
+            importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
+            
+            article = {
+                "id": row['id'],
+                "url": row['url'],
+                "source": row['source_domain'],
+                "title": row['title'],
+                "summary": row['summary'],
+                "content": row['content'],
+                "publishedAt": published_at,
+                "photo": row.get('image_url'),
+                "isImportant": impact_score > 75,
+                "markets": [],
+                "clients": [],
+                "importance": importance,
+                "communitySentiment": int(min(impact_score * 1.2, 100)),
+                "trustIndex": int(min(impact_score * 1.3, 100)),
+            }
+            
+            return jsonify(article)
+    except Exception as e:
+        print(f"Error fetching news detail: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+# ---- Sources
+@api.get("/sources/list")
+async def list_sources():
+    try:
+        async with SessionLocal() as session:
+            query = text("""
+                SELECT 
+                    id,
+                    name,
+                    url,
+                    category,
+                    description,
+                    status,
+                    last_update,
+                    articles_per_day,
+                    reliability,
+                    keywords,
+                    enabled
+                FROM sources
+                ORDER BY name
+            """)
+            
+            result = await session.execute(query)
+            rows = result.mappings().all()
+            
+            sources = []
+            for row in rows:
+                # Format last_update as "X hours ago"
+                last_update = row.get('last_update')
+                if last_update:
+                    time_diff = datetime.now(timezone.utc) - last_update
+                    hours_ago = int(time_diff.total_seconds() / 3600)
+                    last_update_str = f"{hours_ago} hours ago"
+                else:
+                    last_update_str = "Never"
+                
+                # Parse keywords from JSON string
+                keywords_str = row.get('keywords')
+                keywords = []
+                if keywords_str:
+                    try:
+                        keywords = json.loads(keywords_str)
+                    except:
+                        pass
+                
+                sources.append({
+                    "id": str(row['id']),
+                    "name": row['name'],
+                    "url": row['url'],
+                    "category": row['category'],
+                    "description": row['description'],
+                    "status": row['status'],
+                    "lastUpdate": last_update_str,
+                    "articlesPerDay": float(row['articles_per_day']) if row['articles_per_day'] else 0,
+                    "reliability": float(row['reliability']) if row['reliability'] else 0,
+                    "keywords": keywords,
+                    "enabled": bool(row['enabled'])
+                })
+            
+            return jsonify(sources)
+    except Exception as e:
+        print(f"Error fetching sources: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.post("/accounts/add")
+async def add_account():
+    try:
+        data = await request.get_json(force=True)
+        
+        # Validate required fields
+        if not all([data.get('platform'), data.get('link'), data.get('username'), data.get('password')]):
+            return jsonify({"error": "Platform, link, username, and password are required"}), 400
+        
+        # Encrypt the password
+        password_enc = encrypt_secret(data.get('password'))
+        
+        async with SessionLocal() as session:
+            query = text("""
+                INSERT INTO accounts 
+                (id, platform, link, username, password_enc, created_at)
+                VALUES (:id, :platform, :link, :username, :password_enc, :created_at)
+                RETURNING id
+            """)
+            
+            result = await session.execute(
+                query, 
+                {
+                    "id": str(uuid.uuid4()),
+                    "platform": data.get('platform'),
+                    "link": data.get('link'),
+                    "username": data.get('username'),
+                    "password_enc": password_enc,
+                    "created_at": datetime.utcnow()
+                }
+            )
+            
+            inserted_id = result.scalar_one()
+            await session.commit()
+            
+            return jsonify({"ok": True, "id": str(inserted_id)}), 201
+    except Exception as e:
+        print(f"Error adding account: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.post("/sources/add")
+async def add_source():
+    try:
+        data = await request.get_json(force=True)
+        
+        # Validate required fields
+        if not data.get('name') or not data.get('url'):
+            return jsonify({"error": "Name and URL are required"}), 400
+            
+        # Format keywords as JSON string
+        keywords = data.get('keywords', [])
+        keywords_json = json.dumps(keywords) if keywords else None
+        
+        async with SessionLocal() as session:
+            query = text("""
+                INSERT INTO sources 
+                (id, name, url, category, description, status, articles_per_day, reliability, keywords, enabled)
+                VALUES (:id, :name, :url, :category, :description, :status, :articles_per_day, :reliability, :keywords, :enabled)
+                RETURNING id
+            """)
+            
+            result = await session.execute(
+                query, 
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": data.get('name'),
+                    "url": data.get('url'),
+                    "category": data.get('category'),
+                    "description": data.get('description'),
+                    "status": data.get('status', 'active'),
+                    "articles_per_day": data.get('articlesPerDay'),
+                    "reliability": data.get('reliability'),
+                    "keywords": keywords_json,
+                    "enabled": data.get('enabled', True)
+                }
+            )
+            
+            inserted_id = result.scalar_one()
+            await session.commit()
+            
+            return jsonify({"ok": True, "id": str(inserted_id)}), 201
+    except Exception as e:
+        print(f"Error adding source: {e}")
+        return jsonify({"error": str(e)}), 500
 # ---- Clients
 @api.post("/clients/add_client")
 async def add_client():
@@ -268,23 +631,20 @@ async def edit_client():
     payload = await validate(ClientPayload, await request.get_json(force=True))
     return jsonify({"ok": True, "client": payload.model_dump()}), 200
 
-# ---- Sources
-@api.post("/sources/add_source")
-async def add_source():
-    payload = await validate(SourcePayload, await request.get_json(force=True))
-    return jsonify({"ok": True, "source": payload.model_dump()}), 201
 
-@api.post("/sources/edit_source")
-async def edit_source():
-    payload = await validate(SourcePayload, await request.get_json(force=True))
-    return jsonify({"ok": True, "source": payload.model_dump()}), 200
 
 # ---------- App factory ----------
 def create_app() -> Quart:
     load_dotenv()
     app = Quart(__name__)
-    tasks = QuartTasks(app)
-    app = cors(app, allow_origin="*")
+    app = cors(
+        app, 
+        allow_origin=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        allow_credentials=True
+    )
+    
     app.config.update(JSON_SORT_KEYS=False)
 
     from werkzeug.exceptions import HTTPException
@@ -307,12 +667,5 @@ def create_app() -> Quart:
     return app
 
 app = create_app()
-tasks = QuartTasks(app)
-
-@tasks.periodic(timedelta(seconds=1))
-async def schedule_news_update():
-
-
-
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5001)
