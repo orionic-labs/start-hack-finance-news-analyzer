@@ -5,16 +5,14 @@ import api from '@/lib/axios';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { MessageSquare, Search, Filter, Star, Send, Edit, Loader2, ImageOff } from 'lucide-react';
+import { MessageSquare, Filter, Star, Send, Edit, Loader2, ImageOff } from 'lucide-react';
 import { HalfCircleGauge } from '@/components/ui/half-circle-gauge';
 import { TooltipProvider, Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-// Optional option lists for tagging (kept for UI; not persisted server-side)
 const availableMarkets = [
     'FX (USD, CHF, EUR, JPY)',
     'Gold',
@@ -55,7 +53,7 @@ const availableClients = [
 ];
 
 type News = {
-    id: string; // backend returns a.url as id
+    id: string;
     url: string;
     title: string;
     summary: string;
@@ -63,7 +61,7 @@ type News = {
     markets: string[];
     clients: string[];
     importance?: 'low' | 'medium' | 'high';
-    isImportant: boolean;
+    isImportant: boolean; // must be boolean after fetch
     publishedAt: string | null;
     source: string;
     communitySentiment: number;
@@ -93,7 +91,6 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: News
     const [selectedMarkets, setSelectedMarkets] = useState<string[]>(news.markets ?? []);
     const [selectedClients, setSelectedClients] = useState<string[]>(news.clients ?? []);
 
-    // keep dialogs in sync if card re-renders with changed props
     useEffect(() => setSelectedMarkets(news.markets ?? []), [news.markets]);
     useEffect(() => setSelectedClients(news.clients ?? []), [news.clients]);
 
@@ -249,15 +246,14 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: News
 }
 
 export default function News() {
-    const [searchQuery, setSearchQuery] = useState('');
-    const [filterImportance, setFilterImportance] = useState<'all' | 'important'>('all');
+    const [filterImportance, setFilterImportance] = useState<'all' | 'important' | 'not-important'>('all');
     const [newsData, setNewsData] = useState<News[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [chatMessage, setChatMessage] = useState('');
     const [togglingId, setTogglingId] = useState<string | null>(null);
 
-    // Fetch news
+    // Fetch news (and normalize isImportant)
     useEffect(() => {
         let mounted = true;
         (async () => {
@@ -265,8 +261,29 @@ export default function News() {
                 setIsLoading(true);
                 setError(null);
                 const { data } = await api.get<News[]>('/news/list');
-                if (mounted) setNewsData(Array.isArray(data) ? data : []);
-            } catch (e) {
+                if (!mounted) return;
+
+                const normalizeBool = (v: any): boolean => {
+                    if (typeof v === 'boolean') return v;
+                    if (typeof v === 'number') return v !== 0;
+                    if (typeof v === 'string') return ['true', 't', '1', 'yes', 'y'].includes(v.toLowerCase());
+                    return false;
+                };
+
+                const mapped = (Array.isArray(data) ? data : []).map((d: any) => {
+                    // accept multiple possible backend field names just in case
+                    const raw = d?.isImportant ?? d?.importance_flag ?? d?.importanceFlag ?? d?.important ?? null;
+
+                    return {
+                        ...d,
+                        isImportant: normalizeBool(raw),
+                        markets: Array.isArray(d?.markets) ? d.markets : [],
+                        clients: Array.isArray(d?.clients) ? d.clients : [],
+                    } as News;
+                });
+
+                setNewsData(mapped);
+            } catch (e: any) {
                 setError(e?.response?.data?.error || e?.message || 'Failed to fetch news');
             } finally {
                 if (mounted) setIsLoading(false);
@@ -281,10 +298,9 @@ export default function News() {
     const handleToggleImportant = async (n: News) => {
         try {
             setTogglingId(n.id);
-            // optimistic update
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: !it.isImportant } : it)));
             await api.post('/news/importance', { url: n.url }); // server toggles
-        } catch (e) {
+        } catch (e: any) {
             // rollback on fail
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: n.isImportant } : it)));
             setError(e?.response?.data?.error || e?.message || 'Failed to toggle importance');
@@ -298,20 +314,20 @@ export default function News() {
         setNewsData((prev) => prev.map((n) => (n.id === id ? { ...n, ...updates } : n)));
     };
 
+    // Apply importance-only filter
     const filteredNews = useMemo(() => {
-        const q = searchQuery.toLowerCase();
-        return newsData.filter((n) => {
-            const matchesQ = n.title.toLowerCase().includes(q) || n.summary.toLowerCase().includes(q);
-            const matchesImp = filterImportance === 'all' || n.isImportant;
-            return matchesQ && matchesImp;
-        });
-    }, [newsData, searchQuery, filterImportance]);
+        if (filterImportance === 'important') {
+            return newsData.filter((n) => n.isImportant === true);
+        }
+        if (filterImportance === 'not-important') {
+            return newsData.filter((n) => n.isImportant === false);
+        }
+        return newsData;
+    }, [newsData, filterImportance]);
 
     const handleChatSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (!chatMessage.trim()) return;
-        // Hook your chat endpoint here if you add one:
-        // await api.post('/news/send_to_chat', { ... })
         setChatMessage('');
     };
 
@@ -326,24 +342,15 @@ export default function News() {
                     </div>
 
                     <div className="flex gap-3">
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search news..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="pl-10 w-64"
-                            />
-                        </div>
-
-                        <Select value={filterImportance} onValueChange={(v: 'all' | 'important') => setFilterImportance(v)}>
+                        <Select value={filterImportance} onValueChange={(v: 'all' | 'important' | 'not-important') => setFilterImportance(v)}>
                             <SelectTrigger className="w-40">
                                 <Filter className="w-4 h-4 mr-2" />
-                                <SelectValue />
+                                <SelectValue placeholder="Filter" />
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="all">All News</SelectItem>
                                 <SelectItem value="important">Important</SelectItem>
+                                <SelectItem value="not-important">Not Important</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
