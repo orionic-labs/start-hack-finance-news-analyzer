@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,34 +32,6 @@ const availableMarkets = [
   "Emerging Markets",
   "EU(incl. UK and CH) Equities",
   "Japan Equities",
-];
-
-const availableClients = [
-  "JP Morgan",
-  "Goldman Sachs",
-  "Bank of America",
-  "Morgan Stanley",
-  "Wells Fargo",
-  "Deutsche Bank",
-  "BNP Paribas",
-  "Credit Suisse",
-  "UBS",
-  "Barclays",
-  "Shell",
-  "ExxonMobil",
-  "Chevron",
-  "BP",
-  "Total",
-  "Microsoft",
-  "Apple",
-  "Google",
-  "Amazon",
-  "Meta",
-  "HSBC",
-  "Standard Chartered",
-  "Citigroup",
-  "BlackRock",
-  "Vanguard",
 ];
 
 const importantNews = [
@@ -113,9 +85,15 @@ interface ReportItemProps {
     id: number,
     updates: Partial<(typeof importantNews)[0]>
   ) => void;
+  availableClients: string[];
 }
 
-function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
+function ReportItem({
+  news,
+  onUpdateReport,
+  onUpdateNews,
+  availableClients,
+}: ReportItemProps) {
   const [editingReport, setEditingReport] = useState(news.generatedReport);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -468,14 +446,14 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
             <HalfCircleGauge
               value={news.communitySentiment}
               max={100}
-              label="Community Sentiment"
+              label="Impact Score"
               color="#8b5cf6"
               size={100}
             />
             <HalfCircleGauge
               value={news.trustIndex}
               max={100}
-              label="Trust Index"
+              label="Novelty Index"
               color="#06b6d4"
               size={100}
             />
@@ -538,7 +516,7 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
                         htmlFor={`client-${client.id}`}
                         className="text-sm"
                       >
-                        {client.name} ({client.email})
+                        {client.name}
                       </label>
                     </div>
                   ))}
@@ -596,6 +574,38 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
 export default function Reports() {
   // const [reports, setReports] = useState(newsReports);
   const [newsReports, setNewsReports] = useState(importantNews);
+  const [availableClients, setAvailableClients] = useState([]);
+  const [isLoadingClients, setIsLoadingClients] = useState(false);
+  useEffect(() => {
+    fetchClients();
+  }, []);
+  const fetchClients = async () => {
+    try {
+      setIsLoadingClients(true);
+      const response = await fetch("http://localhost:5001/api/clients/list");
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch clients");
+      }
+
+      const data = await response.json();
+      // Ensure data is in the correct format (array of client objects)
+      const clientNames = data.map((client: any) => client.name); // Assuming your response is an array of objects with a `name` field
+      setAvailableClients(clientNames); // Set the names of the clients
+    } catch (err) {
+      console.error("Error fetching clients:", err);
+      // Fallback to mock data if the API call fails
+      setAvailableClients([
+        "JP Morgan",
+        "Goldman Sachs",
+        "Bank of America",
+        "Morgan Stanley",
+        "Wells Fargo",
+      ]);
+    } finally {
+      setIsLoadingClients(false);
+    }
+  };
 
   const handleUpdateReport = (id: number, report: string) => {
     setNewsReports((prev) =>
@@ -671,6 +681,7 @@ export default function Reports() {
             news={news}
             onUpdateReport={handleUpdateReport}
             onUpdateNews={handleUpdateNews}
+            availableClients={availableClients}
           />
         ))}
       </div>

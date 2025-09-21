@@ -80,7 +80,7 @@ export function AppSidebar() {
             <img
               src={collapsed ? "/WPlogo.png" : "/wplogoful.png"}
               alt={collapsed ? "Logo" : "Company Logo"}
-              className="max-h-8 w-auto object-contain transition-all duration-500 ease-out"
+              className="max-h-14 w-auto object-contain transition-all duration-500 ease-in-out"
             />
           </div>
         </div>

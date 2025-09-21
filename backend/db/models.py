@@ -7,6 +7,14 @@ from db.types import Vector1536
 
 Base = declarative_base()
 
+class Client(Base):
+    __tablename__ = "clients"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False)  # Change from EmailStr to String
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
 class Article(Base):
     __tablename__ = "articles"
 
@@ -33,7 +41,8 @@ class Account(Base):
     platform = Column(String, nullable=False)
     link = Column(String, nullable=False)
     username = Column(String, nullable=False)
-    password_enc = Column(String, nullable=False)  # encrypted passwor
+    password_enc = Column(String, nullable=False)  # encrypted password
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 class Source(Base):
     __tablename__ = "sources"

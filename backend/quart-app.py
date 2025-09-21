@@ -6,10 +6,11 @@ import io
 import anyio
 import asyncio
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Union, Optional
 from sqlalchemy import Column, String, DateTime, Numeric, text
+from sqlalchemy.dialects.postgresql import UUID
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError, EmailStr
 from quart import Quart, Blueprint, request, jsonify, send_file, abort, make_response
@@ -145,6 +146,32 @@ api = Blueprint("api", __name__)
 @api.get("/health")
 async def health():
     return {"status": "ok"}
+@api.get("/clients/list")
+async def list_clients():
+    try:
+        async with SessionLocal() as session:
+            query = text("""
+                SELECT 
+                    client_id as id,
+                    name
+                FROM clients
+                ORDER BY name
+            """)
+            
+            result = await session.execute(query)
+            rows = result.mappings().all()
+            
+            clients = []
+            for row in rows:
+                clients.append({
+                    "id": str(row['id']),
+                    "name": row['name']
+                })
+            
+            return jsonify(clients)
+    except Exception as e:
+        print(f"Error fetching clients: {e}")  # Log the error
+        return jsonify({"error": str(e)}), 500  # Return error to the client
 
 @api.post("/news/send_to_chat")
 async def send_to_chat():
@@ -369,21 +396,22 @@ async def list_news():
     try:
         async with SessionLocal() as session:
             query = text("""
-                    SELECT 
-                        a.url as id,
-                        a.url,
-                        a.source_domain,
-                        a.title,
-                        a.summary,
-                        a.published_at,
-                        a.image_url,
-                        COALESCE(aa.impact_score, 0) as impact_score
-                    FROM articles a
-                    LEFT JOIN article_analysis aa ON a.url = aa.article_url
-                    WHERE COALESCE(aa.impact_score, 0) >= 20
-                    ORDER BY a.published_at DESC
-                    LIMIT 50
-                """)
+                SELECT 
+                    a.url as id,
+                    a.url,
+                    a.source_domain,
+                    a.title,
+                    a.summary,
+                    a.published_at,
+                    a.image_url,
+                    COALESCE(aa.impact_score, 0) as impact_score,
+                    COALESCE(aa.novelty, 0) as novelty
+                FROM articles a
+                LEFT JOIN article_analysis aa ON a.url = aa.article_url
+                WHERE COALESCE(aa.impact_score, 0) >= 20
+                ORDER BY a.published_at DESC
+                LIMIT 50
+            """)
             
             result = await session.execute(query)
             rows = result.mappings().all()
@@ -396,6 +424,7 @@ async def list_news():
                 
                 # Determine importance based on impact score
                 impact_score = row.get('impact_score', 0)
+                novelty = row.get('novelty', 0)
                 importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
                 
                 articles.append({
@@ -410,6 +439,8 @@ async def list_news():
                     "markets": [],
                     "clients": [],
                     "importance": importance,
+                    "impactScore": impact_score,  # Add this
+                    "novelty": novelty,           # Add this
                     "communitySentiment": int(min(impact_score * 1.2, 100)),
                     "trustIndex": int(min(impact_score * 1.3, 100)),
                 })
@@ -432,7 +463,8 @@ async def get_news_detail(url):
                     a.raw as content,
                     a.published_at,
                     a.image_url,
-                    COALESCE(aa.impact_score, 0) as impact_score
+                    COALESCE(aa.impact_score, 0) as impact_score,
+                    COALESCE(aa.novelty, 0) as novelty
                 FROM articles a
                 LEFT JOIN article_analysis aa ON a.url = aa.article_url
                 WHERE a.url = :url
@@ -450,6 +482,7 @@ async def get_news_detail(url):
             
             # Determine importance based on impact score
             impact_score = row.get('impact_score', 0)
+            novelty = row.get('novelty', 0)
             importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
             
             article = {
@@ -465,6 +498,8 @@ async def get_news_detail(url):
                 "markets": [],
                 "clients": [],
                 "importance": importance,
+                "impactScore": impact_score,  # Add this
+                "novelty": novelty,           # Add this
                 "communitySentiment": int(min(impact_score * 1.2, 100)),
                 "trustIndex": int(min(impact_score * 1.3, 100)),
             }
@@ -473,7 +508,6 @@ async def get_news_detail(url):
     except Exception as e:
         print(f"Error fetching news detail: {e}")
         return jsonify({"error": str(e)}), 500
-    
 # ---- Sources
 @api.get("/sources/list")
 async def list_sources():

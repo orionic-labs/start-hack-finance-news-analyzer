@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { MessageCircle } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -111,12 +112,24 @@ const newsItems = [
 ];
 
 interface NewsItemProps {
-  news: (typeof newsItems)[number];
+  news: {
+    id: number;
+    title: string;
+    summary: string;
+    photo?: string;
+    markets: string[];
+    clients: string[];
+    importance: string;
+    isImportant: boolean;
+    publishedAt: string;
+    source: string;
+    communitySentiment: number;
+    trustIndex: number;
+    impactScore?: number; // Add this as optional
+    novelty?: number; // Add this as optional
+  };
   onToggleImportant: (id: number) => void;
-  onUpdateNews: (
-    id: number,
-    updatedFields: Partial<(typeof newsItems)[number]>
-  ) => void;
+  onUpdateNews: (id: number, updates: Partial<any>) => void;
 }
 
 function NewsItem({ news, onToggleImportant, onUpdateNews }: NewsItemProps) {
@@ -146,11 +159,14 @@ function NewsItem({ news, onToggleImportant, onUpdateNews }: NewsItemProps) {
       (now.getTime() - date.getTime()) / (1000 * 60)
     );
 
-    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
-    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
+    if (diffInMinutes < -60) return `${diffInMinutes}m ago`;
+    if (diffInMinutes < -1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
     return date.toLocaleDateString();
   };
-
+  const truncateDescription = (text: string, maxLength: number = 300) => {
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + "...";
+  };
   return (
     <Card className="overflow-hidden shadow-lg group">
       <div className="relative">
@@ -195,7 +211,9 @@ function NewsItem({ news, onToggleImportant, onUpdateNews }: NewsItemProps) {
       </CardHeader>
 
       <CardContent className="space-y-5">
-        <p className="text-sm text-gray-600">{news.summary}</p>
+        <p className="text-sm text-gray-600">
+          {truncateDescription(news.summary)}
+        </p>
 
         {/* Markets Section */}
         <div className="bg-blue-50 rounded-lg p-3">
@@ -300,16 +318,16 @@ function NewsItem({ news, onToggleImportant, onUpdateNews }: NewsItemProps) {
           </h4>
           <div className="flex justify-around">
             <HalfCircleGauge
-              value={news.communitySentiment}
+              value={news.impactScore || news.communitySentiment || 0}
               max={100}
-              label="Community Sentiment"
+              label="Impact Score"
               color="#8b5cf6"
               size={100}
             />
             <HalfCircleGauge
-              value={news.trustIndex}
-              max={100}
-              label="Trust Index"
+              value={news.novelty * 10 || news.trustIndex || 0}
+              max={10}
+              label="Novelty Index"
               color="#06b6d4"
               size={100}
             />
@@ -440,30 +458,45 @@ export default function News() {
 
       {/* Chat */}
       <div className="lg:col-span-1">
-        <Card className="sticky top-6">
-          <CardHeader>
+        <Card className="sticky top-6 h-[calc(100vh-8rem)] md:h-[calc(100vh-6rem)] flex flex-col">
+          <CardHeader className="flex-shrink-0">
             <CardTitle className="flex items-center gap-2">
               <MessageSquare className="w-5 h-5" /> AI News Assistant
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="h-96 bg-muted/30 rounded-lg p-4 overflow-y-auto">
-              <p className="text-sm text-muted-foreground">
+          <CardContent className="flex flex-col flex-1 space-y-4 min-h-0">
+            <div className="flex-1 border border-muted/30 rounded-lg p-4 overflow-y-auto min-h-0">
+              <p className="text-sm bg-muted/30 p-2 rounded-md text-muted-foreground">
                 Welcome! Ask me anything about the news items.
               </p>
             </div>
-            <form onSubmit={handleChatSubmit} className="flex gap-2">
-              <Textarea
-                value={chatMessage}
-                onChange={(e) => setChatMessage(e.target.value)}
-                placeholder="Ask about any news item..."
-                className="flex-1 resize-none"
-                rows={1}
-              />
-              <Button type="submit" disabled={!chatMessage.trim()}>
-                <Send className="w-4 h-4" />
-              </Button>
-            </form>
+            <div className="flex-shrink-0 relative bg-gray-50 rounded-md border border-gray-200 p-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                  <MessageCircle className="w-4 h-4 text-blue-600" />
+                </div>
+                <Input
+                  value={chatMessage}
+                  onChange={(e) => setChatMessage(e.target.value)}
+                  placeholder="Ask me anything about the news..."
+                  className="flex-1 border-0 bg-transparent focus-visible:ring-0 shadow-none"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleChatSubmit(e);
+                    }
+                  }}
+                />
+                <Button
+                  onClick={handleChatSubmit}
+                  disabled={!chatMessage.trim()}
+                  size="sm"
+                  className="rounded-full w-8 h-8 p-0 bg-blue-600 hover:bg-blue-700"
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
