@@ -14,10 +14,10 @@ async def insert_analysis_packet(
             """
             INSERT INTO article_analysis
               (article_url, cluster_ids, event_type, tickers, companies, sectors, geos, numerics,
-               impact_score, confidence, novelty, executive_summary, bullets, actions, risks, citations, important)
+               impact_score, confidence, novelty, executive_summary, bullets, actions, risks, citations, important, markets)
             VALUES
               (:url, :cluster_ids, :event_type, :tickers, :companies, :sectors, :geos, :numerics,
-               :impact_score, :confidence, :novelty, :executive_summary, :bullets, :actions, :risks, :citations, :important)
+               :impact_score, :confidence, :novelty, :executive_summary, :bullets, :actions, :risks, :citations, :important, :markets)
             """
         ),
         {
@@ -28,6 +28,7 @@ async def insert_analysis_packet(
             "companies": packet["extracted"]["companies"],
             "sectors": packet["extracted"]["sectors"],
             "geos": packet["extracted"]["geos"],
+            "markets": packet["extracted"]["markets"],
             # These are JSONB columns, so we must serialize them to JSON strings.
             "numerics": json.dumps(packet["extracted"]["numerics"]),
             "bullets": json.dumps(packet["packet"]["bullets"]),

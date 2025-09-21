@@ -263,7 +263,7 @@ export default function News() {
                 const { data } = await api.get<News[]>('/news/list');
                 if (!mounted) return;
 
-                const normalizeBool = (v: any): boolean => {
+                const normalizeBool = (v): boolean => {
                     if (typeof v === 'boolean') return v;
                     if (typeof v === 'number') return v !== 0;
                     if (typeof v === 'string') return ['true', 't', '1', 'yes', 'y'].includes(v.toLowerCase());
@@ -283,7 +283,7 @@ export default function News() {
                 });
 
                 setNewsData(mapped);
-            } catch (e: any) {
+            } catch (e) {
                 setError(e?.response?.data?.error || e?.message || 'Failed to fetch news');
             } finally {
                 if (mounted) setIsLoading(false);
@@ -300,7 +300,7 @@ export default function News() {
             setTogglingId(n.id);
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: !it.isImportant } : it)));
             await api.post('/news/importance', { url: n.url }); // server toggles
-        } catch (e: any) {
+        } catch (e) {
             // rollback on fail
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: n.isImportant } : it)));
             setError(e?.response?.data?.error || e?.message || 'Failed to toggle importance');

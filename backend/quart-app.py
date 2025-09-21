@@ -3,34 +3,28 @@ from __future__ import annotations
 # app_quart.py
 import os
 import uuid
-import io
 import anyio
-import asyncio
 import tempfile
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Union, Optional, Dict, Any
-from sqlalchemy import Column, String, DateTime, Numeric, text
+from sqlalchemy import text
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError, EmailStr
-from quart import Quart, Blueprint, request, jsonify, send_file, abort, make_response
+from quart import Quart, Blueprint, request, jsonify, abort, make_response
 from quart_cors import cors
 from pipelines.podcast import create_podcast
 from db.session import SessionLocal, engine, Base
-from db.models import Account, Source
 from quart import Quart
 from quart_tasks import QuartTasks
 from datetime import timedelta, timezone
-from db.models import Account, Source, Client, Allocation
+from db.models import Client, Allocation
 
 from backend.security.crypto import encrypt_secret
 from backend.scripts.general_report_generator import Customer, call_llm
 from backend.scripts.render_report_pdf import render_report_pdf
-from db.types import Vector1536
 import json
 from backend.pipelines.graphs.graph import graph
-
-from utils.helpers import utcnow
 
 
 # ---------- Schemas ----------
@@ -142,12 +136,12 @@ import aiosmtplib
 
 
 async def send_email_async(
-        to: str,
-        subject: str,
-        text: Union[str, None] = None,
-        html: Union[str, None] = None,
-        cc: list[str] | None = None,
-        bcc: list[str] | None = None,
+    to: str,
+    subject: str,
+    text: Union[str, None] = None,
+    html: Union[str, None] = None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
 ):
     msg = EmailMessage()
     from_addr = os.getenv("MAIL_FROM") or os.getenv("SMTP_USER")
@@ -337,14 +331,16 @@ async def reg_podcast():
                 "answer": answer,
             }
         )
-        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
 
-        return jsonify({
-            "success": True,
-            "voice": audio_base64,  # Send as base64 string
-            "text": answer,
-            "answer": answer
-        })
+        return jsonify(
+            {
+                "success": True,
+                "voice": audio_base64,  # Send as base64 string
+                "text": answer,
+                "answer": answer,
+            }
+        )
     except Exception as e:
         print(f"Detailed error in reg_podcast: {type(e).__name__}: {e}")
         import traceback
@@ -423,7 +419,8 @@ async def delete_account():
                 DELETE FROM accounts 
                 WHERE id = :id
                 RETURNING id
-            """)
+            """
+            )
 
             result = await session.execute(query, {"id": account_id})
             deleted_id = result.scalar_one_or_none()
@@ -446,23 +443,35 @@ async def list_news():
         async with SessionLocal() as session:
             query = text(
                 """
-                SELECT 
-                    a.url AS id,
+                WITH latest_aa AS (
+                SELECT DISTINCT ON (article_url)
+                        article_url,
+                        impact_score,
+                        important,
+                        created_at,
+                        id
+                FROM article_analysis
+                ORDER BY article_url, created_at DESC, id DESC
+                )
+                SELECT
+                    a.id,
                     a.url,
                     a.source_domain,
                     a.title,
                     a.summary,
                     a.published_at,
                     a.image_url,
-                    COALESCE(aa.impact_score, 0) AS impact_score,
-                    aa.important AS importance_flag
+                    laa.impact_score,
+                    laa.important AS importance_flag
                 FROM articles a
-                LEFT JOIN article_analysis aa ON a.url = aa.article_url
-                WHERE COALESCE(aa.impact_score, 0) >= 20
+                JOIN latest_aa laa
+                ON laa.article_url = a.url
+                WHERE laa.impact_score >= 20
                 ORDER BY a.published_at DESC
                 LIMIT 50
-            """
+                """
             )
+
             result = await session.execute(query)
             rows = result.mappings().all()
 
@@ -473,7 +482,6 @@ async def list_news():
                 )
                 impact_score = row.get("impact_score", 0) or 0
 
-                # If importance boolean is NULL, fall back to threshold (>=60)
                 db_flag = row.get("importance_flag")
                 is_important = (
                     bool(db_flag) if db_flag is not None else (impact_score >= 60)
@@ -482,7 +490,7 @@ async def list_news():
                 importance_label = (
                     "high"
                     if impact_score > 75
-                    else "medium" if impact_score > 50 else "low"
+                    else ("medium" if impact_score > 50 else "low")
                 )
 
                 items.append(
@@ -494,7 +502,7 @@ async def list_news():
                         "summary": row["summary"],
                         "publishedAt": published_at,
                         "photo": row.get("image_url"),
-                        "isImportant": is_important,  # <-- now coming from DB (or fallback)
+                        "isImportant": is_important,
                         "importance": importance_label,
                         "markets": [],
                         "clients": [],
@@ -645,7 +653,8 @@ async def list_sources():
                     enabled
                 FROM sources
                 ORDER BY name
-            """)
+            """
+            )
 
             result = await session.execute(query)
             rows = result.mappings().all()
@@ -1024,7 +1033,7 @@ tasks = QuartTasks(app)
 async def schedule():
     sources = [
         "https://www.cnbc.com/id/100003114/device/rss/rss.html",
-        "https://www.reuters.com/world/"
+        "https://www.reuters.com/world/",
     ]
     for source in sources:
         await graph.ainvoke({"link": source})

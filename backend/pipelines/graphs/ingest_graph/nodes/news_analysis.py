@@ -8,6 +8,21 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from backend.services.event_taxonomy import EVENT_TYPES
 
+PORTFOLIO_MARKETS = {
+    "fx_usd": "FX USD",
+    "fx_chf": "FX CHF",
+    "fx_eur": "FX EUR",
+    "fx_jpy": "FX JPY",
+    "gold": "Gold",
+    "global_gov_bonds": "Global Government Bonds",
+    "global_corp_bonds": "Global Corporate Bonds",
+    "usa_equities": "USA Equities",
+    "emerging_markets": "Emerging Markets",
+    "eu_equities": "EU (incl. UK and CH) Equities",
+    "japan_equities": "Japan Equities",
+}
+MARKET_KEYS = list(PORTFOLIO_MARKETS.keys())
+
 
 # ---------- Models ----------
 class ExtractedFacts(BaseModel):
@@ -17,6 +32,7 @@ class ExtractedFacts(BaseModel):
     sectors: List[str] = []
     geos: List[str] = []
     numerics: Dict[str, Any] = {}
+    markets: List[str] = []
 
 
 class ImpactSignals(BaseModel):
@@ -59,16 +75,22 @@ extract_prompt = ChatPromptTemplate.from_messages(
             """
 You are an expert financial analyst. Your task is to extract key, market-relevant facts from the provided news articles with extreme precision.
 
-Return ONLY a single JSON object with the following keys: event_type, tickers, companies, sectors, geos, numerics.
+Return ONLY a single JSON object with the following keys: event_type, tickers, companies, sectors, geos, numerics, markets.
 
 **Extraction Rules:**
 - **event_type**: Classify the primary news event. Must be one of: {event_types}.
-- **tickers**: Extract or infer all valid stock tickers (e.g., AAPL, GOOG). If none are found, return an empty list [].
+- **tickers**: Extract or infer all valid stock tickers (e.g., AAPL, GOOG). If none are found, return [].
 - **companies**: Extract all explicitly named companies. If none, return [].
 - **sectors**: Extract or infer relevant market sectors (e.g., "Technology", "Healthcare"). If none, return [].
 - **geos**: Extract or infer countries or regions central to the story (e.g., "U.S.", "Europe"). If none, return [].
 - **numerics**: Extract key financial figures. The key should be a descriptive snake_case label (e.g., "revenue_growth_yoy", "eps_beat_usd"). Example: {{"revenue_growth_yoy": 0.12, "eps_beat_usd": 0.05}}.
-- **Accuracy is critical**: Do not invent data. Only extract values explicitly present in the text.
+- **markets**: Identify which portfolio markets are directly affected. If no markets match - return []. Choose conservatively from this fixed set (return the KEYS, not labels): {market_keys}.
+  Examples:
+    - Fed rate decision = ["fx_usd","usa_equities","global_gov_bonds"]
+    - BoJ tweak = ["fx_jpy","japan_equities","global_gov_bonds"]
+    - Gold safe-haven bid = ["gold"]
+    - EU antitrust fine on US tech = ["eu_equities","usa_equities"]
+- **Accuracy is critical**: Do not invent data. Only extract values supported by the text.
 
 ARTICLES:
 {articles_block}
@@ -160,7 +182,11 @@ def _extract(articles_block: str) -> ExtractedFacts:
         ExtractedFacts, method="function_calling"
     )
     return chain.invoke(
-        {"articles_block": articles_block, "event_types": ", ".join(EVENT_TYPES)}
+        {
+            "articles_block": articles_block,
+            "event_types": ", ".join(EVENT_TYPES),
+            "market_keys": ", ".join(MARKET_KEYS),
+        }
     )
 
 
@@ -267,9 +293,7 @@ def analyze_news(
         rationale=impact_llm.rationale,
     )
 
-    importance = Importance(
-        importance=impact_blended.impact_score >= 60
-    )
+    importance = Importance(importance=impact_blended.impact_score >= 60)
 
     cites = [
         {
