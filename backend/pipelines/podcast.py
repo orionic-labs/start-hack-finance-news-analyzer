@@ -3,14 +3,14 @@ from elevenlabs import play
 import os
 from dotenv import load_dotenv
 import json
-from backend.db.session import SessionLocal
+from db.session import SessionLocal
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 
-from backend.utils.helpers import extract_text_inside_tags
+from utils.helpers import extract_text_inside_tags
 
 load_dotenv()
 
@@ -18,7 +18,7 @@ client = ElevenLabs(
     api_key=os.getenv("ELEVENLABS_API_KEY")
 )
 
-def fetch_last_week_texts(session, table_name="articles"):
+async def fetch_last_week_texts(session, table_name="articles"):
     since = datetime.now(timezone.utc) - timedelta(days=1)
 
     q = text(f"""
@@ -27,22 +27,16 @@ def fetch_last_week_texts(session, table_name="articles"):
             COALESCE(raw, '')    AS main_text
         FROM {table_name}
         WHERE fetched_at >= :since
-        ORDER BY fetched_at DESC
-        LIMIT 200
     """)
-    rows = session.execute(q, {"since": since}).mappings().all()
-
+    
+    # Await the async database call
+    result = await session.execute(q, {"since": since})
+    rows = result.mappings().all()
+    
     texts = []
-    for r in rows:
-        body = r["main_text"] or r["unstructured_article"] or ""
-        title = r["title"] or ""
-        if title and body:
-            texts.append(f"{title}. {body}")
-        elif body:
-            texts.append(body)
-        elif title:
-            texts.append(title)
-
+    for row in rows:
+        texts.append(f"Title: {row['title']}\nContent: {row['main_text']}")
+    
     return texts
 
 SYSTEM_PROMPT = """
@@ -81,45 +75,46 @@ That's your snapshot of the financial world today — equal parts chaos and come
 """
 
 
-def create_podcast(voice_id="0UusJbwWpzPDiWWzB6e8"):
-    session = SessionLocal()
-    texts = fetch_last_week_texts(session)
+async def create_podcast(voice_id="0UusJbwWpzPDiWWzB6e8"):
+    async with SessionLocal() as session:
+        texts = await fetch_last_week_texts(session)
+        
+        if not texts:
+            texts = ["No recent articles found. Here is a summary of market conditions."]
 
-    model = ChatOpenAI(model="gpt-4o")
+        model = ChatOpenAI(model="gpt-4o")
+        
+        news = " | ".join(texts)
+        message = HumanMessage(content=news)
 
-    news =" | ".join(texts)
-    message = HumanMessage(content=news)
+        # Create message and prompt chain
+        assistant_prompt = ChatPromptTemplate.from_messages([
+            ('system', SYSTEM_PROMPT),
+            message
+        ])
 
-    # Create message and prompt chain
-    assistant_prompt = ChatPromptTemplate.from_messages([
-        ('system', SYSTEM_PROMPT),
-        message
-    ])
+        # Invoke the model
+        assistant_chain = assistant_prompt | model
+        raw_response = assistant_chain.invoke({})
 
-    # Invoke the model
-    assistant_chain = assistant_prompt | model
-    raw_response = assistant_chain.invoke({})
+        # Extract hypothesis and validate
+        answer = extract_text_inside_tags(raw_response.content, "answer")
 
-    # Extract hypothesis and validate
-    answer = extract_text_inside_tags(raw_response.content, "answer")
+        audio = client.text_to_speech.convert(
+            text=answer,
+            voice_id=voice_id,
+            model_id="eleven_multilingual_v2",
+            output_format="mp3_44100_128",
+        )
+        with open("audio.mp3", "wb") as f:
+            for chunk in audio:
+                f.write(chunk)
+                
+        audio_bytes = b"".join(client.text_to_speech.convert(
+            text=answer,
+            voice_id=voice_id,
+            model_id="eleven_multilingual_v2",
+            output_format="mp3_44100_128",
+        ))
 
-    audio = client.text_to_speech.convert(
-        text=answer,
-        voice_id=voice_id,
-        model_id="eleven_multilingual_v2",
-        output_format="mp3_44100_128",
-    )
-    with open("audio.mp3", "wb") as f:
-        for chunk in audio:
-            f.write(chunk)
-    audio_bytes = b"".join(client.text_to_speech.convert(
-        text=answer,
-        voice_id=voice_id,
-        model_id="eleven_multilingual_v2",
-        output_format="mp3_44100_128",
-    ))
-
-    return audio_bytes
-
-
-create_podcast()
+        return audio_bytes, answer

@@ -1,6 +1,7 @@
 from __future__ import annotations
 # app_quart.py
 import os
+import uuid
 import io
 import anyio
 import asyncio
@@ -8,23 +9,28 @@ import tempfile
 from datetime import datetime
 from email.message import EmailMessage
 from typing import Union, Optional
-
+from sqlalchemy import Column, String, DateTime, Numeric, text
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ValidationError, EmailStr
 from quart import Quart, Blueprint, request, jsonify, send_file, abort, make_response
 from quart_cors import cors
-
+from pipelines.podcast import create_podcast
 from db.session import SessionLocal, engine, Base
-from db.models import Account
+from db.models import Account, Source
+
 from security.crypto import encrypt_secret
 from scripts.general_report_generator import Customer, call_llm
 from scripts.render_report_pdf import render_report_pdf
+from db.types import Vector1536
+import json
 
-
+from utils.helpers import utcnow
 
 
 
 # ---------- Schemas ----------
+
+
 class IngestRequest(BaseModel):
     source_urls: list[str] = Field(min_items=1)
     deduplicate: bool = True
@@ -260,58 +266,360 @@ async def reg_report():
 
 @api.post("/podcasts/regenerate")
 async def reg_podcast():
-    payload = await validate(RagQueryRequest, await request.get_json(force=True))
-    out = await to_thread(answer_query_sync, payload.query, payload.top_k)
-    return jsonify({"answer": out.get("answer", ""), "sources": out.get("sources", [])})
+    try:
+        print("Starting podcast generation...")
+        
+        # Generate podcast
+        audio_bytes, answer = await create_podcast()
+        
+        # Convert binary data to base64 for JSON serialization
+        import base64
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        
+        return jsonify({
+            "success": True,
+            "voice": audio_base64,  # Send as base64 string
+            "text": answer,
+            "answer": answer
+        })
+    except Exception as e:
+        print(f"Detailed error in reg_podcast: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+# ---- Accounts
 
 # ---- Accounts
-@api.post("/accounts/add_account")
-async def add_account():
-    data = await request.get_json(force=True)
+@api.get("/accounts/list")
+async def list_accounts():
     try:
-        payload = AccountCreate(**data)
-    except ValidationError as e:
-        abort(400, description=e.json())
+        async with SessionLocal() as session:
+            query = text("""
+                SELECT 
+                    id,
+                    platform,
+                    link,
+                    username,
+                    created_at
+                FROM accounts
+                ORDER BY created_at DESC
+            """)
+            
+            result = await session.execute(query)
+            rows = result.mappings().all()
+            
+            accounts = []
+            for row in rows:
+                # Format created_at as "X hours ago"
+                created_at = row.get('created_at')
+                if created_at:
+                    time_diff = datetime.now(timezone.utc) - created_at
+                    hours_ago = int(time_diff.total_seconds() / 3600)
+                    last_sync = f"{hours_ago} hours ago" if hours_ago > 0 else "Just now"
+                else:
+                    last_sync = "Never"
+                
+                accounts.append({
+                    "id": str(row['id']),
+                    "platform": row['platform'],
+                    "link": row['link'],
+                    "username": row['username'],
+                    "lastSync": last_sync,
+                    "status": "active",  # Default status
+                    "mediaSource": row['platform']  # Use platform as media source
+                })
+            
+            return jsonify(accounts)
+    except Exception as e:
+        print(f"Error fetching accounts: {e}")
+        return jsonify({"error": str(e)}), 500
 
-    # Encrypt the password
-    password_enc = encrypt_secret(payload.password)
 
-    # Persist
-    async with SessionLocal() as session:
-        acct = Account(
-            platform=payload.platform,
-            link=str(payload.link),
-            username=payload.username,
-            password_enc=password_enc,
-        )
-        session.add(acct)
-        await session.commit()
-        await session.refresh(acct)
 
-    # Return safe data only
-    out = AccountOut(
-        id=str(acct.id),
-        platform=acct.platform,
-        link=acct.link,
-        username=acct.username,
-    )
-    return jsonify(out.model_dump()), 201
-
-@api.post("/accounts/edit_account")
-async def edit_account():
-    payload = await validate(AccountPayload, await request.get_json(force=True))
-    # TODO: update DB by payload.id
-    return jsonify({"ok": True, "account": payload.model_dump()}), 200
-
-@api.post("/accounts/delete_account")
+@api.post("/accounts/delete")
 async def delete_account():
-    body = await request.get_json(force=True)
-    account_id = (body or {}).get("id")
-    if not account_id:
-        abort(400, description='{"error":"id is required"}')
-    # TODO: delete in DB
-    return jsonify({"ok": True, "deleted_id": account_id}), 200
-
+    try:
+        data = await request.get_json(force=True)
+        account_id = data.get('id')
+        
+        if not account_id:
+            return jsonify({"error": "Account ID is required"}), 400
+        
+        async with SessionLocal() as session:
+            query = text("""
+                DELETE FROM accounts 
+                WHERE id = :id
+                RETURNING id
+            """)
+            
+            result = await session.execute(query, {"id": account_id})
+            deleted_id = result.scalar_one_or_none()
+            
+            if not deleted_id:
+                return jsonify({"error": "Account not found"}), 404
+                
+            await session.commit()
+            
+            return jsonify({"ok": True, "deleted_id": str(deleted_id)}), 200
+    except Exception as e:
+        print(f"Error deleting account: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.get("/news/list")
+async def list_news():
+    try:
+        async with SessionLocal() as session:
+            query = text("""
+                    SELECT 
+                        a.url as id,
+                        a.url,
+                        a.source_domain,
+                        a.title,
+                        a.summary,
+                        a.published_at,
+                        a.image_url,
+                        COALESCE(aa.impact_score, 0) as impact_score
+                    FROM articles a
+                    LEFT JOIN article_analysis aa ON a.url = aa.article_url
+                    WHERE COALESCE(aa.impact_score, 0) >= 20
+                    ORDER BY a.published_at DESC
+                    LIMIT 50
+                """)
+            
+            result = await session.execute(query)
+            rows = result.mappings().all()
+            
+            # Convert to list of dictionaries
+            articles = []
+            for row in rows:
+                # Convert datetime to ISO string
+                published_at = row['published_at'].isoformat() if row['published_at'] else None
+                
+                # Determine importance based on impact score
+                impact_score = row.get('impact_score', 0)
+                importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
+                
+                articles.append({
+                    "id": row['id'],
+                    "url": row['url'],
+                    "source": row['source_domain'],
+                    "title": row['title'],
+                    "summary": row['summary'],
+                    "publishedAt": published_at,
+                    "photo": row.get('image_url'),  
+                    "isImportant": impact_score > 75,
+                    "markets": [],
+                    "clients": [],
+                    "importance": importance,
+                    "communitySentiment": int(min(impact_score * 1.2, 100)),
+                    "trustIndex": int(min(impact_score * 1.3, 100)),
+                })
+            
+            return jsonify(articles)
+    except Exception as e:
+        print(f"Error fetching news: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.get("/news/detail/<path:url>")
+async def get_news_detail(url):
+    try:
+        async with SessionLocal() as session:
+            query = text("""
+                SELECT 
+                    a.url as id,
+                    a.url,
+                    a.source_domain,
+                    a.title,
+                    a.summary,
+                    a.raw as content,
+                    a.published_at,
+                    a.image_url,
+                    COALESCE(aa.impact_score, 0) as impact_score
+                FROM articles a
+                LEFT JOIN article_analysis aa ON a.url = aa.article_url
+                WHERE a.url = :url
+                LIMIT 1
+            """)
+            
+            result = await session.execute(query, {"url": url})
+            row = result.mappings().first()
+            
+            if not row:
+                return jsonify({"error": "News article not found"}), 404
+                
+            # Convert datetime to ISO string
+            published_at = row['published_at'].isoformat() if row['published_at'] else None
+            
+            # Determine importance based on impact score
+            impact_score = row.get('impact_score', 0)
+            importance = "high" if impact_score > 75 else "medium" if impact_score > 50 else "low"
+            
+            article = {
+                "id": row['id'],
+                "url": row['url'],
+                "source": row['source_domain'],
+                "title": row['title'],
+                "summary": row['summary'],
+                "content": row['content'],
+                "publishedAt": published_at,
+                "photo": row.get('image_url'),
+                "isImportant": impact_score > 75,
+                "markets": [],
+                "clients": [],
+                "importance": importance,
+                "communitySentiment": int(min(impact_score * 1.2, 100)),
+                "trustIndex": int(min(impact_score * 1.3, 100)),
+            }
+            
+            return jsonify(article)
+    except Exception as e:
+        print(f"Error fetching news detail: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+# ---- Sources
+@api.get("/sources/list")
+async def list_sources():
+    try:
+        async with SessionLocal() as session:
+            query = text("""
+                SELECT 
+                    id,
+                    name,
+                    url,
+                    category,
+                    description,
+                    status,
+                    last_update,
+                    articles_per_day,
+                    reliability,
+                    keywords,
+                    enabled
+                FROM sources
+                ORDER BY name
+            """)
+            
+            result = await session.execute(query)
+            rows = result.mappings().all()
+            
+            sources = []
+            for row in rows:
+                # Format last_update as "X hours ago"
+                last_update = row.get('last_update')
+                if last_update:
+                    time_diff = datetime.now(timezone.utc) - last_update
+                    hours_ago = int(time_diff.total_seconds() / 3600)
+                    last_update_str = f"{hours_ago} hours ago"
+                else:
+                    last_update_str = "Never"
+                
+                # Parse keywords from JSON string
+                keywords_str = row.get('keywords')
+                keywords = []
+                if keywords_str:
+                    try:
+                        keywords = json.loads(keywords_str)
+                    except:
+                        pass
+                
+                sources.append({
+                    "id": str(row['id']),
+                    "name": row['name'],
+                    "url": row['url'],
+                    "category": row['category'],
+                    "description": row['description'],
+                    "status": row['status'],
+                    "lastUpdate": last_update_str,
+                    "articlesPerDay": float(row['articles_per_day']) if row['articles_per_day'] else 0,
+                    "reliability": float(row['reliability']) if row['reliability'] else 0,
+                    "keywords": keywords,
+                    "enabled": bool(row['enabled'])
+                })
+            
+            return jsonify(sources)
+    except Exception as e:
+        print(f"Error fetching sources: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.post("/accounts/add")
+async def add_account():
+    try:
+        data = await request.get_json(force=True)
+        
+        # Validate required fields
+        if not all([data.get('platform'), data.get('link'), data.get('username'), data.get('password')]):
+            return jsonify({"error": "Platform, link, username, and password are required"}), 400
+        
+        # Encrypt the password
+        password_enc = encrypt_secret(data.get('password'))
+        
+        async with SessionLocal() as session:
+            query = text("""
+                INSERT INTO accounts 
+                (id, platform, link, username, password_enc, created_at)
+                VALUES (:id, :platform, :link, :username, :password_enc, :created_at)
+                RETURNING id
+            """)
+            
+            result = await session.execute(
+                query, 
+                {
+                    "id": str(uuid.uuid4()),
+                    "platform": data.get('platform'),
+                    "link": data.get('link'),
+                    "username": data.get('username'),
+                    "password_enc": password_enc,
+                    "created_at": datetime.utcnow()
+                }
+            )
+            
+            inserted_id = result.scalar_one()
+            await session.commit()
+            
+            return jsonify({"ok": True, "id": str(inserted_id)}), 201
+    except Exception as e:
+        print(f"Error adding account: {e}")
+        return jsonify({"error": str(e)}), 500
+@api.post("/sources/add")
+async def add_source():
+    try:
+        data = await request.get_json(force=True)
+        
+        # Validate required fields
+        if not data.get('name') or not data.get('url'):
+            return jsonify({"error": "Name and URL are required"}), 400
+            
+        # Format keywords as JSON string
+        keywords = data.get('keywords', [])
+        keywords_json = json.dumps(keywords) if keywords else None
+        
+        async with SessionLocal() as session:
+            query = text("""
+                INSERT INTO sources 
+                (id, name, url, category, description, status, articles_per_day, reliability, keywords, enabled)
+                VALUES (:id, :name, :url, :category, :description, :status, :articles_per_day, :reliability, :keywords, :enabled)
+                RETURNING id
+            """)
+            
+            result = await session.execute(
+                query, 
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": data.get('name'),
+                    "url": data.get('url'),
+                    "category": data.get('category'),
+                    "description": data.get('description'),
+                    "status": data.get('status', 'active'),
+                    "articles_per_day": data.get('articlesPerDay'),
+                    "reliability": data.get('reliability'),
+                    "keywords": keywords_json,
+                    "enabled": data.get('enabled', True)
+                }
+            )
+            
+            inserted_id = result.scalar_one()
+            await session.commit()
+            
+            return jsonify({"ok": True, "id": str(inserted_id)}), 201
+    except Exception as e:
+        print(f"Error adding source: {e}")
+        return jsonify({"error": str(e)}), 500
 # ---- Clients
 @api.post("/clients/add_client")
 async def add_client():
@@ -323,16 +631,7 @@ async def edit_client():
     payload = await validate(ClientPayload, await request.get_json(force=True))
     return jsonify({"ok": True, "client": payload.model_dump()}), 200
 
-# ---- Sources
-@api.post("/sources/add_source")
-async def add_source():
-    payload = await validate(SourcePayload, await request.get_json(force=True))
-    return jsonify({"ok": True, "source": payload.model_dump()}), 201
 
-@api.post("/sources/edit_source")
-async def edit_source():
-    payload = await validate(SourcePayload, await request.get_json(force=True))
-    return jsonify({"ok": True, "source": payload.model_dump()}), 200
 
 # ---------- App factory ----------
 def create_app() -> Quart:

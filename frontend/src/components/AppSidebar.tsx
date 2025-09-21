@@ -59,7 +59,7 @@ export function AppSidebar() {
   const getNavClasses = (path: string) => {
     const active = isActive(path);
     return active
-      ? "bg-dashboard-primary text-primary-foreground font-medium hover:bg-[#A1B3CE] hover:!text-primary-foreground"
+      ? "bg-dashboard-primary text-primary-foreground font-medium hover:bg-[#3D4450] hover:!text-primary-foreground"
       : "hover:bg-muted/50 text-muted-foreground hover:text-foreground";
   };
 
