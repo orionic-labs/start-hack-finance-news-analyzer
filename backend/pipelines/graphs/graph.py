@@ -11,6 +11,8 @@ import json
 
 from backend.pipelines.graphs.web_scrapper_graph.nodes.hardcoded_website import get_posts_hardcoded
 from backend.pipelines.graphs.web_scrapper_graph.nodes.send_articles import send_article
+import asyncio
+
 
 builder = StateGraph(OverallState,
                      input=InitState,
@@ -32,3 +34,8 @@ builder.add_edge("End of graph", END)
 
 graph = builder.compile()
 
+async def run():
+    print(await graph.ainvoke({"link": "https://www.reuters.com/world/"}))
+
+if __name__ == "__main__":
+    asyncio.run(run())
