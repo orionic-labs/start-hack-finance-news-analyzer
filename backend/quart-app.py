@@ -916,9 +916,14 @@ app = create_app()
 tasks = QuartTasks(app)
 
 
-@tasks.periodic(timedelta(seconds=60))
+@tasks.periodic(timedelta(seconds=800))
 async def schedule():
-    await graph.ainvoke({"link": "https://www.cnbc.com/id/100003114/device/rss/rss.html"})
+    sources = [
+        "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+        "https://www.reuters.com/world/"
+    ]
+    for source in sources:
+        await graph.ainvoke({"link": source})
 
 
 if __name__ == "__main__":

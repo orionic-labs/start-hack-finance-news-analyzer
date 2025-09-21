@@ -92,7 +92,7 @@ async def main(state: InitState) -> OverallState:
         run_cfg = CrawlerRunConfig(c4a_script=script, exclude_external_links=True)
         result = await crawler.arun(url=state["link"], config=run_cfg)
         articles = parse_reuters_news(result.markdown)
-        articles = articles[:3]
+        articles = articles[:15]
         return articles
 
 

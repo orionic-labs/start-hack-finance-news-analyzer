@@ -13,7 +13,7 @@ def get_cnbc_articles_with_images(state: InitState):
     feed = feedparser.parse(state["link"])
     articles = []
 
-    for entry in feed.entries[:3]:
+    for entry in feed.entries[:15]:
         title = entry.title
         link = entry.link
 
