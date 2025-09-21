@@ -14,10 +14,10 @@ async def insert_analysis_packet(
             """
             INSERT INTO article_analysis
               (article_url, cluster_ids, event_type, tickers, companies, sectors, geos, numerics,
-               impact_score, confidence, novelty, executive_summary, bullets, actions, risks, citations)
+               impact_score, confidence, novelty, executive_summary, bullets, actions, risks, citations, important)
             VALUES
               (:url, :cluster_ids, :event_type, :tickers, :companies, :sectors, :geos, :numerics,
-               :impact_score, :confidence, :novelty, :executive_summary, :bullets, :actions, :risks, :citations)
+               :impact_score, :confidence, :novelty, :executive_summary, :bullets, :actions, :risks, :citations, :important)
             """
         ),
         {
@@ -40,5 +40,7 @@ async def insert_analysis_packet(
             "confidence": packet["impact"]["confidence"],
             "novelty": packet["impact"]["novelty"],
             "executive_summary": packet["packet"]["executive_summary"],
+            # These are boolean
+            "important": packet["importance"]["importance"],
         },
     )

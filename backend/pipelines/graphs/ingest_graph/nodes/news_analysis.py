@@ -34,9 +34,14 @@ class AnalystPacket(BaseModel):
     citations: List[Dict[str, Any]]
 
 
+class Importance(BaseModel):
+    importance: bool
+
+
 class NewsAnalysis(BaseModel):
     extracted: ExtractedFacts
     impact: ImpactSignals
+    importance: Importance
     packet: AnalystPacket
 
 
@@ -262,6 +267,8 @@ def analyze_news(
         rationale=impact_llm.rationale,
     )
 
+    importance = impact_blended.impact_score >= 60
+
     cites = [
         {
             "url": primary_article.get("url"),
@@ -278,4 +285,6 @@ def analyze_news(
     ]
 
     packet = _write(style_guide, rag_snippets, extracted, impact_blended, cites)
-    return NewsAnalysis(extracted=extracted, impact=impact_blended, packet=packet)
+    return NewsAnalysis(
+        extracted=extracted, impact=impact_blended, packet=packet, importance=importance
+    )
