@@ -4,7 +4,7 @@ import json
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from backend.services.sms import send_sms_alert
+from backend.services.sms_service import send_sms_alert
 
 
 async def insert_analysis_packet(
