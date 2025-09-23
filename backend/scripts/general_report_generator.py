@@ -134,7 +134,7 @@ TONE:
 
 OUTPUT FORMAT (Markdown, exactly these sections):
 # Titel
-## Executive Summary
+## Zusammenfassung für Entscheidungsträger
 ## Artikel-Agenda
 ## Marktauswirkungen (nach Anlageklasse)
 ## FX- und Rohstoffsicht
