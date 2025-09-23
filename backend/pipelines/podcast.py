@@ -14,30 +14,32 @@ from utils.helpers import extract_text_inside_tags
 
 load_dotenv()
 
-client = ElevenLabs(
-    api_key=os.getenv("ELEVENLABS_API_KEY")
-)
+client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+
 
 async def fetch_last_week_texts(session, table_name="articles"):
     since = datetime.now(timezone.utc) - timedelta(days=1)
 
-    q = text(f"""
+    q = text(
+        f"""
         SELECT
             COALESCE(title, '')        AS title,
             COALESCE(raw, '')    AS main_text
         FROM {table_name}
         WHERE fetched_at >= :since
-    """)
-    
+    """
+    )
+
     # Await the async database call
     result = await session.execute(q, {"since": since})
     rows = result.mappings().all()
-    
+
     texts = []
     for row in rows:
         texts.append(f"Title: {row['title']}\nContent: {row['main_text']}")
-    
+
     return texts
+
 
 SYSTEM_PROMPT = """
 IMPORTANT: user input will be provided as a collection of parsed financial and business news articles from the last 24 hours!
@@ -75,23 +77,24 @@ That's your snapshot of the financial world today — equal parts chaos and come
 """
 
 
-async def create_podcast(voice_id="0UusJbwWpzPDiWWzB6e8"):
+async def create_podcast(voice_id="Zz6sR0uCvGT7lOt6j1uF"):
     async with SessionLocal() as session:
         texts = await fetch_last_week_texts(session)
-        
+
         if not texts:
-            texts = ["No recent articles found. Here is a summary of market conditions."]
+            texts = [
+                "No recent articles found. Here is a summary of market conditions."
+            ]
 
         model = ChatOpenAI(model="gpt-4o")
-        
+
         news = " | ".join(texts)
         message = HumanMessage(content=news)
 
         # Create message and prompt chain
-        assistant_prompt = ChatPromptTemplate.from_messages([
-            ('system', SYSTEM_PROMPT),
-            message
-        ])
+        assistant_prompt = ChatPromptTemplate.from_messages(
+            [("system", SYSTEM_PROMPT), message]
+        )
 
         # Invoke the model
         assistant_chain = assistant_prompt | model
@@ -109,12 +112,14 @@ async def create_podcast(voice_id="0UusJbwWpzPDiWWzB6e8"):
         with open("audio.mp3", "wb") as f:
             for chunk in audio:
                 f.write(chunk)
-                
-        audio_bytes = b"".join(client.text_to_speech.convert(
-            text=answer,
-            voice_id=voice_id,
-            model_id="eleven_multilingual_v2",
-            output_format="mp3_44100_128",
-        ))
+
+        audio_bytes = b"".join(
+            client.text_to_speech.convert(
+                text=answer,
+                voice_id=voice_id,
+                model_id="eleven_multilingual_v2",
+                output_format="mp3_44100_128",
+            )
+        )
 
         return audio_bytes, answer

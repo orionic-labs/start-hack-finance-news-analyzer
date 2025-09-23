@@ -3,13 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '@/lib/axios';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
-import { MessageSquare, Filter, Star, Send, Edit, Loader2, ImageOff } from 'lucide-react';
+import { MessageSquare, Filter, Star, Send, Loader2, ImageOff } from 'lucide-react';
 import { HalfCircleGauge } from '@/components/ui/half-circle-gauge';
 import { TooltipProvider, Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -83,7 +80,7 @@ type ChatMessage = {
 
 function uid() {
     // Stable UID across modern browsers; falls back for older ones
-    return (crypto as any)?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    return crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function formatTime(ts: string | null) {
@@ -91,28 +88,15 @@ function formatTime(ts: string | null) {
     const date = new Date(ts);
     const now = new Date();
     const diffMin = Math.floor((now.getTime() - date.getTime()) / 60000);
-    if (diffMin < 60) return `${diffMin}m ago`;
-    if (diffMin < 1440) return `${Math.floor(diffMin / 60)}h ago`;
     return date.toLocaleDateString();
 }
 
 function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: NewsItemProps) {
-    const [editMarketsOpen, setEditMarketsOpen] = useState(false);
-    const [editClientsOpen, setEditClientsOpen] = useState(false);
     const [selectedMarkets, setSelectedMarkets] = useState<string[]>(news.markets ?? []);
     const [selectedClients, setSelectedClients] = useState<string[]>(news.clients ?? []);
 
     useEffect(() => setSelectedMarkets(news.markets ?? []), [news.markets]);
     useEffect(() => setSelectedClients(news.clients ?? []), [news.clients]);
-
-    const handleSaveMarkets = () => {
-        onUpdateNewsLocal(news.id, { markets: selectedMarkets });
-        setEditMarketsOpen(false);
-    };
-    const handleSaveClients = () => {
-        onUpdateNewsLocal(news.id, { clients: selectedClients });
-        setEditClientsOpen(false);
-    };
 
     return (
         <Card className="overflow-hidden shadow-lg group">
@@ -155,88 +139,6 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: News
 
             <CardContent className="space-y-5">
                 <p className="text-sm text-gray-600">{news.summary}</p>
-
-                {/* Markets */}
-                <div className="bg-blue-50 rounded-lg p-3">
-                    <div className="flex justify-between">
-                        <h4 className="text-sm font-semibold">Markets Influenced</h4>
-                        <Dialog open={editMarketsOpen} onOpenChange={setEditMarketsOpen}>
-                            <DialogTrigger asChild>
-                                <Button size="sm" variant="ghost">
-                                    <Edit className="h-3 w-3" />
-                                </Button>
-                            </DialogTrigger>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle>Edit Markets</DialogTitle>
-                                </DialogHeader>
-                                {availableMarkets.map((m) => (
-                                    <div key={m} className="flex items-center space-x-2">
-                                        <Checkbox
-                                            checked={selectedMarkets.includes(m)}
-                                            onCheckedChange={(checked) =>
-                                                setSelectedMarkets((prev) => (checked ? [...prev, m] : prev.filter((x) => x !== m)))
-                                            }
-                                        />
-                                        <span>{m}</span>
-                                    </div>
-                                ))}
-                                <div className="flex justify-end gap-2 mt-4">
-                                    <Button variant="outline" onClick={() => setEditMarketsOpen(false)}>
-                                        Cancel
-                                    </Button>
-                                    <Button onClick={handleSaveMarkets}>Save</Button>
-                                </div>
-                            </DialogContent>
-                        </Dialog>
-                    </div>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                        {(news.markets ?? []).map((m) => (
-                            <Badge key={m}>{m}</Badge>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Clients */}
-                <div className="bg-green-50 rounded-lg p-3">
-                    <div className="flex justify-between">
-                        <h4 className="text-sm font-semibold">Clients Influenced</h4>
-                        <Dialog open={editClientsOpen} onOpenChange={setEditClientsOpen}>
-                            <DialogTrigger asChild>
-                                <Button size="sm" variant="ghost">
-                                    <Edit className="h-3 w-3" />
-                                </Button>
-                            </DialogTrigger>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle>Edit Clients</DialogTitle>
-                                </DialogHeader>
-                                {availableClients.map((c) => (
-                                    <div key={c} className="flex items-center space-x-2">
-                                        <Checkbox
-                                            checked={selectedClients.includes(c)}
-                                            onCheckedChange={(checked) =>
-                                                setSelectedClients((prev) => (checked ? [...prev, c] : prev.filter((x) => x !== c)))
-                                            }
-                                        />
-                                        <span>{c}</span>
-                                    </div>
-                                ))}
-                                <div className="flex justify-end gap-2 mt-4">
-                                    <Button variant="outline" onClick={() => setEditClientsOpen(false)}>
-                                        Cancel
-                                    </Button>
-                                    <Button onClick={handleSaveClients}>Save</Button>
-                                </div>
-                            </DialogContent>
-                        </Dialog>
-                    </div>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                        {(news.clients ?? []).map((c) => (
-                            <Badge key={c}>{c}</Badge>
-                        ))}
-                    </div>
-                </div>
 
                 {/* KPIs */}
                 <div className="bg-purple-50 rounded-lg p-3">
@@ -281,14 +183,14 @@ export default function News() {
                 const { data } = await api.get<News[]>('/news/list');
                 if (!mounted) return;
 
-                const normalizeBool = (v: any): boolean => {
+                const normalizeBool = (v): boolean => {
                     if (typeof v === 'boolean') return v;
                     if (typeof v === 'number') return v !== 0;
                     if (typeof v === 'string') return ['true', 't', '1', 'yes', 'y'].includes(v.toLowerCase());
                     return false;
                 };
 
-                const mapped = (Array.isArray(data) ? data : []).map((d: any) => {
+                const mapped = (Array.isArray(data) ? data : []).map((d) => {
                     const raw = d?.isImportant ?? d?.importance_flag ?? d?.importanceFlag ?? d?.important ?? null;
                     return {
                         ...d,
@@ -299,7 +201,7 @@ export default function News() {
                 });
 
                 setNewsData(mapped);
-            } catch (e: any) {
+            } catch (e) {
                 setError(e?.response?.data?.error || e?.message || 'Failed to fetch news');
             } finally {
                 if (mounted) setIsLoading(false);
@@ -316,7 +218,7 @@ export default function News() {
             setTogglingId(n.id);
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: !it.isImportant } : it)));
             await api.post('/news/importance', { url: n.url }); // server toggles
-        } catch (e: any) {
+        } catch (e) {
             // rollback on fail
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: n.isImportant } : it)));
             setError(e?.response?.data?.error || e?.message || 'Failed to toggle importance');
@@ -361,12 +263,18 @@ export default function News() {
         setChatLoading(true);
 
         try {
-            const { data } = await api.post('/send_message_chat', { customers: msg });
+            const { data } = await api.post('/chatbot/send_message_chat', { customers: msg });
             const answer: string = typeof data?.answer === 'string' ? data.answer : 'Sorry, I could not generate an answer.';
-            const botMsg: ChatMessage = { id: uid(), role: 'assistant', content: answer };
+
+            const botMsg: ChatMessage = {
+                id: uid(),
+                role: 'assistant',
+                content: answer,
+            };
+
             setChatMessages((prev) => [...prev, botMsg]);
-        } catch (err: any) {
-            const message = err?.response?.data?.error || err?.message || 'Failed to contact the assistant.';
+        } catch (e) {
+            const message = e?.response?.data?.error || e?.message || 'Failed to contact the assistant.';
             const botMsg: ChatMessage = { id: uid(), role: 'assistant', content: `Error: ${message}` };
             setChatMessages((prev) => [...prev, botMsg]);
         } finally {

@@ -13,3 +13,4 @@ EVENT_TYPES = [
     "MARKET_MOVE",
     "OTHER",
 ]
+
