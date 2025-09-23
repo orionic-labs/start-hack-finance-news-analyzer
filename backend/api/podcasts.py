@@ -1,35 +1,40 @@
 # api/podcasts.py
 from quart import jsonify, Blueprint
 from pipelines.podcast import create_podcast
+import uuid
+import asyncio
+
+jobs = {}
 
 bp = Blueprint("podcasts", __name__)
 
 
-@bp.post("/podcasts/regenerate")
+@bp.post("/podcasts/start")
 async def reg_podcast():
-    try:
-        print("Starting podcast generation...")
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "pending", "result": None}
 
-        # Generate podcast
-        audio_bytes, answer = await create_podcast()
+    async def run_job():
+        try:
+            audio_bytes, answer = await create_podcast()
+            import base64
 
-        # Convert binary data to base64 for JSON serialization
-        import base64
+            audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
 
-        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-
-        return jsonify(
-            {
-                "success": True,
-                "voice": audio_base64,  # Send as base64 string
-                "text": answer,
-                "answer": answer,
+            jobs[job_id] = {
+                "status": "done",
+                "result": {"voice": audio_base64, "answer": answer},
             }
-        )
+        except Exception as e:
+            jobs[job_id] = {"status": "error", "result": str(e)}
 
-    except Exception as e:
-        print(f"Detailed error in reg_podcast: {type(e).__name__}: {e}")
-        import traceback
+    asyncio.create_task(run_job())
+    return jsonify({"jobId": job_id})
 
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+
+@bp.get("/podcasts/status/<job_id>")
+async def podcast_status(job_id):
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(job)

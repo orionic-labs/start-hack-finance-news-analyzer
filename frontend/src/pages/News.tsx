@@ -92,14 +92,11 @@ function formatTime(ts: string | null) {
 }
 
 function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: NewsItemProps) {
-    const [selectedMarkets, setSelectedMarkets] = useState<string[]>(news.markets ?? []);
-    const [selectedClients, setSelectedClients] = useState<string[]>(news.clients ?? []);
-
-    useEffect(() => setSelectedMarkets(news.markets ?? []), [news.markets]);
-    useEffect(() => setSelectedClients(news.clients ?? []), [news.clients]);
+    const [expanded, setExpanded] = useState(false);
 
     return (
-        <Card className="overflow-hidden shadow-lg group">
+        <Card className="h-full flex flex-col overflow-hidden shadow-lg group">
+            {/* Image + Important Button */}
             <div className="relative">
                 {news.photo ? (
                     <img src={news.photo} alt={news.title} className="w-full h-48 object-cover" />
@@ -133,14 +130,27 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: News
                 </div>
             </div>
 
+            {/* Title */}
             <CardHeader>
                 <CardTitle>{news.title}</CardTitle>
             </CardHeader>
 
-            <CardContent className="space-y-5">
-                <p className="text-sm text-gray-600">{news.summary}</p>
+            {/* Content */}
+            <CardContent className="flex flex-col flex-1">
+                {/* Top: summary with show more */}
+                <div className="mb-4">
+                    <p className={`text-sm text-gray-600 ${expanded ? '' : 'line-clamp-3'}`}>{news.summary}</p>
+                    {news.summary.length > 200 && (
+                        <Button variant="link" size="sm" className="px-0 text-blue-600" onClick={() => setExpanded(!expanded)}>
+                            {expanded ? 'Show less' : 'Show more'}
+                        </Button>
+                    )}
+                </div>
 
-                {/* KPIs */}
+                {/* Spacer to push KPI block to bottom */}
+                <div className="flex-1" />
+
+                {/* KPI Block */}
                 <div className="bg-purple-50 rounded-lg p-3">
                     <h4 className="text-sm font-semibold mb-2">Key Performance Indicators</h4>
                     <div className="flex justify-around">
@@ -149,8 +159,13 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: News
                     </div>
                 </div>
 
-                <div className="flex justify-between text-xs text-gray-500 border-t pt-2">
-                    <span>{news.source}</span>
+                {/* Footer */}
+                <div className="flex justify-between text-xs text-gray-500 border-t pt-2 mt-3">
+                    <span>
+                        <a className="underline" href={news.url}>
+                            {news.source}
+                        </a>
+                    </span>
                     <span>{formatTime(news.publishedAt)}</span>
                 </div>
             </CardContent>
@@ -316,7 +331,7 @@ export default function News() {
                 )}
                 {error && <p className="text-red-600">Error: {error}</p>}
 
-                <div className="grid md:grid-cols-2 gap-6">
+                <div className="grid md:grid-cols-2 gap-6 auto-rows-fr">
                     {!isLoading &&
                         filteredNews.map((news) => (
                             <NewsItem
