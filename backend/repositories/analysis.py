@@ -4,6 +4,7 @@ import json
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from backend.services.sms import send_sms_alert
 
 
 async def insert_analysis_packet(
@@ -45,3 +46,5 @@ async def insert_analysis_packet(
             "important": packet["importance"]["importance"],
         },
     )
+    if packet["importance"]["importance"] == 1:
+        await send_sms_alert(article_url, packet)
