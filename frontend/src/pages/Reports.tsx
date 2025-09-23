@@ -149,12 +149,12 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            text: news.summary, // Send the news text for processing
+            text: editingReport || news.summary, // Send the news text for processing
             filename: `financial_report_${news.id}.pdf`,
-            company: "Your Company Name",
+            company: "Wellershoff & Partners",
             report_title: news.title,
             report_date: new Date().toISOString().split("T")[0],
-            logo_path: null,
+            logo_path: "frontend/public/WPlogo.png",
             include_cover: true,
             customers: [
               {
@@ -212,7 +212,7 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
           },
           body: JSON.stringify({
             title: news.title,
-            text: news.summary,
+            text: editingReport || news.summary,
             markets: news.markets,
             source: news.source,
             publishedAt: news.publishedAt,
