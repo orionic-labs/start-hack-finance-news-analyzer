@@ -154,7 +154,7 @@ async def update_portfolio(client_id: int):
       }
     }
     """
-    body = await _validate(UpdatePortfolioPayload, await request.get_json(force=True))
+    body = _validate(UpdatePortfolioPayload, await request.get_json(force=True))
     try:
         async with SessionLocal() as session:
             # Optional: ensure client exists

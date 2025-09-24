@@ -3,10 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '@/lib/axios';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MessageSquare, Filter, Star, Send, Loader2, ImageOff } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
+import { MessageSquare, Filter, Star, Send, Loader2, ImageOff, Edit3 } from 'lucide-react';
 import { HalfCircleGauge } from '@/components/ui/half-circle-gauge';
 import { TooltipProvider, Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -19,34 +22,6 @@ const availableMarkets = [
     'Emerging Markets',
     'EU(incl. UK and CH) Equities',
     'Japan Equities',
-];
-
-const availableClients = [
-    'JP Morgan',
-    'Goldman Sachs',
-    'Bank of America',
-    'Morgan Stanley',
-    'Wells Fargo',
-    'Deutsche Bank',
-    'BNP Paribas',
-    'Credit Suisse',
-    'UBS',
-    'Barclays',
-    'Shell',
-    'ExxonMobil',
-    'Chevron',
-    'BP',
-    'Total',
-    'Microsoft',
-    'Apple',
-    'Google',
-    'Amazon',
-    'Meta',
-    'HSBC',
-    'Standard Chartered',
-    'Citigroup',
-    'BlackRock',
-    'Vanguard',
 ];
 
 type News = {
@@ -65,11 +40,20 @@ type News = {
     trustIndex: number;
 };
 
+type Client = {
+    id: number;
+    name: string;
+    status: string;
+    portfolio: Record<string, number>; // { "<asset_class>": percent }
+};
+
 type NewsItemProps = {
     news: News;
     toggling: boolean;
     onToggleImportant: (n: News) => Promise<void>;
     onUpdateNewsLocal: (id: string, updated: Partial<News>) => void;
+    resolveClients: (markets: string[]) => string[]; // FE recompute
+    allClientNames: string[]; // for manual dialog
 };
 
 type ChatMessage = {
@@ -79,20 +63,65 @@ type ChatMessage = {
 };
 
 function uid() {
-    // Stable UID across modern browsers; falls back for older ones
     return crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function formatTime(ts: string | null) {
     if (!ts) return '—';
     const date = new Date(ts);
-    const now = new Date();
-    const diffMin = Math.floor((now.getTime() - date.getTime()) / 60000);
     return date.toLocaleDateString();
 }
 
-function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: NewsItemProps) {
+// ---------- helpers for FE-side targeting ----------
+const norm = (s?: string) => (s ?? '').trim().toLowerCase();
+
+function resolveClientsForMarkets(markets: string[], clientsList: Client[]): string[] {
+    if (!Array.isArray(markets) || markets.length === 0 || clientsList.length === 0) return [];
+    const mset = new Set(markets.map(norm));
+    const targeted: string[] = [];
+    for (const c of clientsList) {
+        const pf = c?.portfolio ?? {};
+        for (const [asset, pct] of Object.entries(pf)) {
+            if ((pct ?? 0) > 0 && mset.has(norm(asset))) {
+                targeted.push(c.name);
+                break; // one hit is enough
+            }
+        }
+    }
+    // de-dupe while preserving order
+    return Array.from(new Set(targeted));
+}
+
+const unionStrings = (a: string[], b: string[]) => Array.from(new Set([...(a ?? []), ...(b ?? [])]));
+
+// --------------------------------------------------
+
+function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal, resolveClients, allClientNames }: NewsItemProps) {
     const [expanded, setExpanded] = useState(false);
+    const [editMarketsOpen, setEditMarketsOpen] = useState(false);
+    const [editClientsOpen, setEditClientsOpen] = useState(false);
+
+    const [selectedMarkets, setSelectedMarkets] = useState(news.markets ?? []);
+    const [selectedClients, setSelectedClients] = useState(news.clients ?? []);
+
+    const handleSaveMarkets = () => {
+        const recomputed = resolveClients(selectedMarkets);
+        // keep any manual tags the user added previously
+        const mergedClients = unionStrings(selectedClients, recomputed);
+        onUpdateNewsLocal(news.id, { markets: selectedMarkets, clients: mergedClients });
+        setEditMarketsOpen(false);
+    };
+
+    const handleSaveClients = () => {
+        onUpdateNewsLocal(news.id, { clients: selectedClients });
+        setEditClientsOpen(false);
+    };
+
+    useEffect(() => {
+        // keep local selectors in sync when parent updates (e.g., recomputed or remote refresh)
+        setSelectedMarkets(news.markets ?? []);
+        setSelectedClients(news.clients ?? []);
+    }, [news.markets, news.clients]);
 
     return (
         <Card className="h-full flex flex-col overflow-hidden shadow-lg group">
@@ -140,22 +169,103 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: News
                 {/* Top: summary with show more */}
                 <div className="mb-4">
                     <p className={`text-sm text-gray-600 ${expanded ? '' : 'line-clamp-3'}`}>{news.summary}</p>
-                    {news.summary.length > 200 && (
+                    {news.summary && news.summary.length > 200 && (
                         <Button variant="link" size="sm" className="px-0 text-blue-600" onClick={() => setExpanded(!expanded)}>
                             {expanded ? 'Show less' : 'Show more'}
                         </Button>
                     )}
                 </div>
 
-                {/* Spacer to push KPI block to bottom */}
                 <div className="flex-1" />
 
-                {/* KPI Block */}
+                {/* Markets */}
+                <div className="bg-blue-50 rounded-lg p-3 mb-3">
+                    <div className="flex justify-between">
+                        <h4 className="text-sm font-semibold">Markets Influenced</h4>
+                        <Dialog open={editMarketsOpen} onOpenChange={setEditMarketsOpen}>
+                            <DialogTrigger asChild>
+                                <Button size="sm" variant="ghost">
+                                    <Edit3 className="h-3 w-3" />
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Edit Markets</DialogTitle>
+                                </DialogHeader>
+                                {availableMarkets.map((m) => (
+                                    <div key={m} className="flex items-center space-x-2">
+                                        <Checkbox
+                                            checked={selectedMarkets.includes(m)}
+                                            onCheckedChange={(checked) =>
+                                                setSelectedMarkets((prev) => (checked ? [...prev, m] : prev.filter((x) => x !== m)))
+                                            }
+                                        />
+                                        <span>{m}</span>
+                                    </div>
+                                ))}
+                                <div className="flex justify-end gap-2 mt-4">
+                                    <Button variant="outline" onClick={() => setEditMarketsOpen(false)}>
+                                        Cancel
+                                    </Button>
+                                    <Button onClick={handleSaveMarkets}>Save</Button>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                        {(news.markets ?? []).map((m) => (
+                            <Badge key={m}>{m}</Badge>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Clients */}
+                <div className="bg-green-50 rounded-lg p-3 mb-3">
+                    <div className="flex justify-between">
+                        <h4 className="text-sm font-semibold">Clients Influenced</h4>
+                        <Dialog open={editClientsOpen} onOpenChange={setEditClientsOpen}>
+                            <DialogTrigger asChild>
+                                <Button size="sm" variant="ghost">
+                                    <Edit3 className="h-3 w-3" />
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Edit Clients</DialogTitle>
+                                </DialogHeader>
+                                {allClientNames.map((c) => (
+                                    <div key={c} className="flex items-center space-x-2">
+                                        <Checkbox
+                                            checked={selectedClients.includes(c)}
+                                            onCheckedChange={(checked) =>
+                                                setSelectedClients((prev) => (checked ? [...prev, c] : prev.filter((x) => x !== c)))
+                                            }
+                                        />
+                                        <span>{c}</span>
+                                    </div>
+                                ))}
+                                <div className="flex justify-end gap-2 mt-4">
+                                    <Button variant="outline" onClick={() => setEditClientsOpen(false)}>
+                                        Cancel
+                                    </Button>
+                                    <Button onClick={handleSaveClients}>Save</Button>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                        {(news.clients ?? []).map((c) => (
+                            <Badge key={c}>{c}</Badge>
+                        ))}
+                    </div>
+                </div>
+
+                {/* KPI Block (fixed near bottom thanks to flex-1 spacer above) */}
                 <div className="bg-purple-50 rounded-lg p-3">
                     <h4 className="text-sm font-semibold mb-2">Key Performance Indicators</h4>
                     <div className="flex justify-around">
-                        <HalfCircleGauge value={news.communitySentiment} max={100} label="Community Sentiment" color="#8b5cf6" size={100} />
-                        <HalfCircleGauge value={news.trustIndex} max={100} label="Trust Index" color="#06b6d4" size={100} />
+                        <HalfCircleGauge value={news.communitySentiment} max={100} label="Community Sentiment" size={100} color="#8b5cf6" />
+                        <HalfCircleGauge value={news.trustIndex} max={100} label="Trust Index" size={100} color="#06b6d4" />
                     </div>
                 </div>
 
@@ -176,6 +286,7 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal }: News
 export default function News() {
     const [filterImportance, setFilterImportance] = useState<'all' | 'important' | 'not-important'>('all');
     const [newsData, setNewsData] = useState<News[]>([]);
+    const [clients, setClients] = useState<Client[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -188,35 +299,43 @@ export default function News() {
     const [chatLoading, setChatLoading] = useState(false);
     const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
-    // Fetch news (and normalize isImportant)
+    // Fetch news + clients, then compute targeted clients on FE
     useEffect(() => {
         let mounted = true;
         (async () => {
             try {
                 setIsLoading(true);
                 setError(null);
-                const { data } = await api.get<News[]>('/news/list');
+
+                const [newsResp, clientsResp] = await Promise.all([api.get<News[]>('/news/list'), api.get<Client[]>('/clients/list')]);
                 if (!mounted) return;
 
-                const normalizeBool = (v): boolean => {
+                const normalizeBool = (v: any): boolean => {
                     if (typeof v === 'boolean') return v;
                     if (typeof v === 'number') return v !== 0;
                     if (typeof v === 'string') return ['true', 't', '1', 'yes', 'y'].includes(v.toLowerCase());
                     return false;
                 };
 
-                const mapped = (Array.isArray(data) ? data : []).map((d) => {
-                    const raw = d?.isImportant ?? d?.importance_flag ?? d?.importanceFlag ?? d?.important ?? null;
+                const rawNews = Array.isArray(newsResp.data) ? newsResp.data : [];
+                const rawClients = Array.isArray(clientsResp.data) ? clientsResp.data : [];
+
+                setClients(rawClients);
+
+                const mapped = rawNews.map((d: any) => {
+                    const rawImp = d?.isImportant ?? d?.importance_flag ?? d?.importanceFlag ?? d?.important ?? null;
+                    const markets = Array.isArray(d?.markets) ? d.markets : [];
+                    const clientsCalc = resolveClientsForMarkets(markets, rawClients);
                     return {
                         ...d,
-                        isImportant: normalizeBool(raw),
-                        markets: Array.isArray(d?.markets) ? d.markets : [],
-                        clients: Array.isArray(d?.clients) ? d.clients : [],
+                        isImportant: normalizeBool(rawImp),
+                        markets,
+                        clients: clientsCalc,
                     } as News;
                 });
 
                 setNewsData(mapped);
-            } catch (e) {
+            } catch (e: any) {
                 setError(e?.response?.data?.error || e?.message || 'Failed to fetch news');
             } finally {
                 if (mounted) setIsLoading(false);
@@ -227,14 +346,25 @@ export default function News() {
         };
     }, []);
 
+    // If client allocations update while the page is open and we refetch them elsewhere,
+    // recompute clients for each news from markets and union with any manual selections.
+    useEffect(() => {
+        if (!clients.length || !newsData.length) return;
+        setNewsData((prev) =>
+            prev.map((n) => {
+                const computed = resolveClientsForMarkets(n.markets ?? [], clients);
+                return { ...n, clients: unionStrings(n.clients ?? [], computed) };
+            })
+        );
+    }, [clients]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Toggle importance (optimistic)
     const handleToggleImportant = async (n: News) => {
         try {
             setTogglingId(n.id);
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: !it.isImportant } : it)));
             await api.post('/news/importance', { url: n.url }); // server toggles
-        } catch (e) {
-            // rollback on fail
+        } catch (e: any) {
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: n.isImportant } : it)));
             setError(e?.response?.data?.error || e?.message || 'Failed to toggle importance');
         } finally {
@@ -249,24 +379,19 @@ export default function News() {
 
     // Apply importance-only filter
     const filteredNews = useMemo(() => {
-        if (filterImportance === 'important') {
-            return newsData.filter((n) => n.isImportant === true);
-        }
-        if (filterImportance === 'not-important') {
-            return newsData.filter((n) => n.isImportant === false);
-        }
+        if (filterImportance === 'important') return newsData.filter((n) => n.isImportant === true);
+        if (filterImportance === 'not-important') return newsData.filter((n) => n.isImportant === false);
         return newsData;
     }, [newsData, filterImportance]);
 
-    // Auto-scroll chat to bottom on new messages
+    // Chat autoscroll
     useEffect(() => {
         if (chatScrollRef.current) {
             chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
         }
     }, [chatMessages, chatLoading]);
 
-    // Send message to backend LLM endpoint WITHOUT changing it:
-    // the endpoint expects: { customers: <string> } and returns { answer: <string> }
+    // Chat submit
     const handleChatSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const msg = chatMessage.trim();
@@ -280,22 +405,17 @@ export default function News() {
         try {
             const { data } = await api.post('/chatbot/send_message_chat', { customers: msg });
             const answer: string = typeof data?.answer === 'string' ? data.answer : 'Sorry, I could not generate an answer.';
-
-            const botMsg: ChatMessage = {
-                id: uid(),
-                role: 'assistant',
-                content: answer,
-            };
-
+            const botMsg: ChatMessage = { id: uid(), role: 'assistant', content: answer };
             setChatMessages((prev) => [...prev, botMsg]);
-        } catch (e) {
+        } catch (e: any) {
             const message = e?.response?.data?.error || e?.message || 'Failed to contact the assistant.';
-            const botMsg: ChatMessage = { id: uid(), role: 'assistant', content: `Error: ${message}` };
-            setChatMessages((prev) => [...prev, botMsg]);
+            setChatMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: `Error: ${message}` }]);
         } finally {
             setChatLoading(false);
         }
     };
+
+    const allClientNames = useMemo(() => clients.map((c) => c.name).sort((a, b) => a.localeCompare(b)), [clients]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -340,6 +460,8 @@ export default function News() {
                                 toggling={togglingId === news.id}
                                 onToggleImportant={handleToggleImportant}
                                 onUpdateNewsLocal={handleUpdateNewsLocal}
+                                resolveClients={(m) => resolveClientsForMarkets(m, clients)}
+                                allClientNames={allClientNames}
                             />
                         ))}
                 </div>

@@ -4,7 +4,7 @@ from pipelines.podcast import create_podcast
 import uuid
 import asyncio
 
-jobs = {}
+jobs: dict[str, dict] = {}
 
 bp = Blueprint("podcasts", __name__)
 
@@ -12,10 +12,11 @@ bp = Blueprint("podcasts", __name__)
 @bp.post("/podcasts/start")
 async def reg_podcast():
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "pending", "result": None}
+    jobs[job_id] = {"status": "queued", "result": None}
 
     async def run_job():
         try:
+            jobs[job_id]["status"] = "running"
             audio_bytes, answer = await create_podcast()
             import base64
 

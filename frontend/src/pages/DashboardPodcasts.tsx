@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
@@ -6,75 +6,124 @@ import { RefreshCw, Download, Edit3, CheckCircle, Volume2 } from 'lucide-react';
 import { usePodcastStore } from '@/store/podcastStore';
 
 export default function DashboardPodcasts() {
-    const { jobId, setJobId } = usePodcastStore();
+    const { jobId, status, script, voiceBase64, setJobId, setStatus, setResult } = usePodcastStore();
 
-    const [isGenerated, setIsGenerated] = useState(false);
-    const [isGenerating, setIsGenerating] = useState(false);
-    const [podcastScript, setPodcastScript] = useState('');
     const [isEditing, setIsEditing] = useState(false);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const isGenerating = status === 'queued' || status === 'pending' || status === 'running';
+    const hasResult = status === 'done' && (script || voiceBase64);
 
     const handleGeneratePodcast = async () => {
-        setIsGenerating(true);
+        // Immediately reflect state in UI
+        setStatus('pending');
         try {
             const res = await fetch('http://localhost:5001/api/podcasts/start', {
                 method: 'POST',
             });
-            const { jobId } = await res.json();
-            setJobId(jobId); // store globally
+            const data = await res.json();
+            if (data?.jobId) {
+                setJobId(data.jobId);
+                setStatus('queued');
+            } else {
+                setStatus('error');
+                console.error('Unexpected response from /start:', data);
+            }
         } catch (err) {
             console.error('Error starting podcast:', err);
-            setIsGenerating(false);
+            setStatus('error');
         }
     };
 
-    // Poll backend for status
+    // Build/rebuild audio URL whenever base64 changes (persists across navigation)
     useEffect(() => {
-        if (!jobId) return;
-
-        const interval = setInterval(async () => {
-            try {
-                const res = await fetch(`http://localhost:5001/api/podcasts/status/${jobId}`);
-                const data = await res.json();
-
-                if (data.status === 'done') {
-                    setPodcastScript(data.result.answer);
-
-                    const binaryString = atob(data.result.voice);
-                    const bytes = new Uint8Array(binaryString.length);
-                    for (let i = 0; i < binaryString.length; i++) {
-                        bytes[i] = binaryString.charCodeAt(i);
-                    }
-                    const audioBlob = new Blob([bytes], { type: 'audio/mpeg' });
-                    setAudioUrl(URL.createObjectURL(audioBlob));
-
-                    setIsGenerated(true);
-                    setIsGenerating(false);
-                    clearInterval(interval);
-                }
-
-                if (data.status === 'error') {
-                    console.error('Podcast generation failed:', data.result);
-                    setIsGenerating(false);
-                    clearInterval(interval);
-                }
-            } catch (err) {
-                console.error('Polling error:', err);
-                setIsGenerating(false);
-                clearInterval(interval);
+        if (!voiceBase64) {
+            if (audioUrl) {
+                URL.revokeObjectURL(audioUrl);
             }
-        }, 3000);
+            setAudioUrl(null);
+            return;
+        }
+        try {
+            const binaryString = atob(voiceBase64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+            if (audioUrl) URL.revokeObjectURL(audioUrl);
+            setAudioUrl(url);
+        } catch (e) {
+            console.error('Failed to build audio URL from base64:', e);
+            setAudioUrl(null);
+        }
+        // cleanup on unmount
+        return () => {
+            if (audioUrl) URL.revokeObjectURL(audioUrl);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [voiceBase64]);
 
-        return () => clearInterval(interval);
-    }, [jobId]);
+    // Poll backend for status whenever a jobId exists (persists across navigation)
+    useEffect(() => {
+        const startPolling = () => {
+            if (!jobId) return;
+
+            const pollOnce = async () => {
+                try {
+                    const res = await fetch(`http://localhost:5001/api/podcasts/status/${jobId}`);
+                    if (!res.ok) {
+                        // 404 means job not found; consider it error
+                        if (res.status === 404) {
+                            setStatus('error');
+                        }
+                        return;
+                    }
+                    const data = await res.json();
+
+                    // Normalize and reflect status
+                    const s = (data?.status ?? 'pending') as 'queued' | 'pending' | 'running' | 'done' | 'error';
+                    if (s === 'pending' || s === 'queued' || s === 'running') {
+                        setStatus(s);
+                    } else if (s === 'done') {
+                        const answer = data?.result?.answer ?? '';
+                        const voice = data?.result?.voice ?? null;
+                        setResult(answer, voice);
+                        // keep jobId around (optional). If you prefer to clear: setJobId(null)
+                    } else if (s === 'error') {
+                        setStatus('error');
+                    }
+                } catch (err) {
+                    console.error('Polling error:', err);
+                    // Briefly mark pending again; avoid killing the spinner on transient errors
+                    setStatus('pending');
+                }
+            };
+
+            // Fire immediately, then every 3s
+            pollOnce();
+            pollingRef.current = setInterval(pollOnce, 3000);
+        };
+
+        // Start polling if needed
+        if (jobId) startPolling();
+
+        // Cleanup on unmount or job change
+        return () => {
+            if (pollingRef.current) {
+                clearInterval(pollingRef.current);
+                pollingRef.current = null;
+            }
+        };
+    }, [jobId, setResult, setStatus]);
 
     const handleDownload = () => {
         const content = `
 Market Pulse Podcast Script
 Generated on: ${new Date().toLocaleDateString()}
 
-${podcastScript}
-    `;
+${script}
+`;
         const blob = new Blob([content], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -86,7 +135,8 @@ ${podcastScript}
         URL.revokeObjectURL(url);
     };
 
-    if (!isGenerated && !isGenerating) {
+    // Initial landing view
+    if (!hasResult && !isGenerating) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-8 max-w-[800px] mx-auto">
                 <div className="text-center space-y-4">
@@ -150,16 +200,20 @@ ${podcastScript}
                     </div>
                 </CardHeader>
                 <CardContent>
-                    {isEditing ? (
+                    {isGenerating && !script ? (
+                        <div className="text-sm text-muted-foreground py-6">Generating script…</div>
+                    ) : isEditing ? (
                         <Textarea
-                            value={podcastScript}
-                            onChange={(e) => setPodcastScript(e.target.value)}
+                            value={script}
+                            onChange={(e) => {
+                                // local editing only – you can wire this to store if you want persistence of edits
+                            }}
                             className="min-h-[400px]"
                             placeholder="Podcast script content..."
                         />
                     ) : (
                         <div className="bg-muted/30 rounded-xl p-6 border border-primary/10">
-                            <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground font-medium">{podcastScript}</pre>
+                            <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground font-medium">{script}</pre>
                         </div>
                     )}
                 </CardContent>
@@ -174,7 +228,11 @@ ${podcastScript}
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                    {audioUrl ? (
+                    {isGenerating && !audioUrl ? (
+                        <div className="text-center py-8">
+                            <p className="text-muted-foreground">Generating audio…</p>
+                        </div>
+                    ) : audioUrl ? (
                         <div className="space-y-4">
                             <audio controls className="w-full" src={audioUrl}>
                                 Your browser does not support the audio element.

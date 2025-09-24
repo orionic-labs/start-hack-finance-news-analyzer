@@ -85,11 +85,6 @@ Return ONLY a single JSON object with the following keys: event_type, tickers, c
 - **geos**: Extract or infer countries or regions central to the story (e.g., "U.S.", "Europe"). If none, return [].
 - **numerics**: Extract key financial figures. The key should be a descriptive snake_case label (e.g., "revenue_growth_yoy", "eps_beat_usd"). Example: {{"revenue_growth_yoy": 0.12, "eps_beat_usd": 0.05}}.
 - **markets**: Identify which portfolio markets are directly affected. If no markets match - return []. Choose conservatively from this fixed set (return the KEYS, not labels): {market_keys}.
-  Examples:
-    - Fed rate decision = ["fx_usd","usa_equities","global_gov_bonds"]
-    - BoJ tweak = ["fx_jpy","japan_equities","global_gov_bonds"]
-    - Gold safe-haven bid = ["gold"]
-    - EU antitrust fine on US tech = ["eu_equities","usa_equities"]
 - **Accuracy is critical**: Do not invent data. Only extract values supported by the text.
 
 ARTICLES:

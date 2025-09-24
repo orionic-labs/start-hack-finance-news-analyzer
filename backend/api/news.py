@@ -34,13 +34,13 @@ async def list_news():
                 """
                 WITH latest_aa AS (
                   SELECT DISTINCT ON (article_url)
-                      article_url, impact_score, important, created_at, id
+                      article_url, impact_score, important, markets, created_at, id
                   FROM article_analysis
                   ORDER BY article_url, created_at DESC, id DESC
                 )
                 SELECT a.id, a.url, a.source_domain, a.title, a.summary,
                        a.published_at, a.image_url,
-                       laa.impact_score, laa.important AS importance_flag
+                       laa.impact_score, laa.markets, laa.important AS importance_flag
                 FROM articles a
                 JOIN latest_aa laa ON laa.article_url = a.url
                 WHERE laa.impact_score >= 20
@@ -65,6 +65,7 @@ async def list_news():
                     if impact_score > 75
                     else ("medium" if impact_score > 50 else "low")
                 )
+
                 items.append(
                     {
                         "id": row["id"],
@@ -76,7 +77,7 @@ async def list_news():
                         "photo": row.get("image_url"),
                         "isImportant": is_important,
                         "importance": importance_label,
-                        "markets": [],
+                        "markets": row["markets"],
                         "clients": [],
                         "communitySentiment": int(min(impact_score * 1.2, 100)),
                         "trustIndex": int(min(impact_score * 1.3, 100)),
