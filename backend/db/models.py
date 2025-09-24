@@ -2,8 +2,9 @@ from sqlalchemy import Column, String, DateTime, Numeric, Boolean, ForeignKey, I
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
-from utils.helpers import utcnow
-from db.types import Vector1536
+from sqlalchemy import Column, String, Float, ForeignKey, Integer
+from backend.utils.helpers import utcnow
+from backend.db.types import Vector1536
 
 Base = declarative_base()
 
@@ -11,7 +12,8 @@ Base = declarative_base()
 class Article(Base):
     __tablename__ = "articles"
 
-    url = Column(String, primary_key=True, nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    url = Column(String, nullable=False, unique=True)
     source_domain = Column(String, nullable=False)
     raw = Column(String, nullable=False)
     title = Column(String, nullable=False)
@@ -37,6 +39,25 @@ class Account(Base):
     link = Column(String, nullable=False)
     username = Column(String, nullable=False)
     password_enc = Column(String, nullable=False)  # encrypted password
+
+
+class Assets(Base):
+    __tablename__ = "assets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    asset_name = Column(String, nullable=False)
+
+class EntitySentiment(Base):
+    __tablename__ = "entity_sentiments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
+    asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+
+    label = Column(String, nullable=False)
+    score = Column(Float, nullable=False)
+
 
 
 class Source(Base):

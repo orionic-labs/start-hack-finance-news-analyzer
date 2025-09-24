@@ -70,6 +70,7 @@ async def _find_semantic_duplicate_db(
         .limit(TOPK_EMB)
     )
 
+    # emb_str = "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
     result = await session.execute(stmt, {"emb": emb})
     rows = result.fetchall()
     if not rows:
@@ -82,7 +83,7 @@ async def _find_semantic_duplicate_db(
 
 async def insert_article(
     article_row: dict,
-) -> Tuple[str, Optional[str], Optional[Union[int, float]]]:
+) -> Tuple[str, Optional[str], Optional[Union[int, float]], Optional[int]]:
     """
     Returns: (status, ref_url, metric)
       status in {"inserted", "duplicate", "semantic-duplicate", "exists"}
@@ -96,7 +97,7 @@ async def insert_article(
                 hit = await _find_near_duplicate_simhash(session, new_hash)
                 if hit:
                     dup_url, dist = hit
-                    return ("duplicate", dup_url, dist)
+                    return ("duplicate", dup_url, dist, None)
 
             # 2) Semantic dup via embeddings
             combined = (
@@ -106,17 +107,23 @@ async def insert_article(
                 sem = await _find_semantic_duplicate_db(session, combined)
                 if sem:
                     dup_url, sim = sem
-                    return ("semantic-duplicate", dup_url, sim)
+                    stmt = select(Article.id).where(Article.url == dup_url)
+                    res = await session.execute(stmt)
+                    article_id = res.scalar_one_or_none()
+                    return ("semantic-duplicate", dup_url, sim, article_id)
 
                 # 3) Store embedding if missing
                 if "content_emb" not in article_row or article_row["content_emb"] is None:
                     article_row["content_emb"] = embed_text(combined)
 
             # 4) Insert (PK url prevents exact dup)
-            session.add(Article(**article_row))
+            article = Article(**article_row)
+            session.add(article)
+            await session.flush()
+            article_id = article.id
             await session.commit()
-            return ("inserted", None, None)
+            return ("inserted", None, None, article_id)
 
         except IntegrityError:
             await session.rollback()
-            return ("exists", None, None)
+            return ("exists", None, None, None)

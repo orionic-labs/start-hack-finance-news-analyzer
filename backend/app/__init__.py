@@ -3,8 +3,9 @@ from __future__ import annotations
 from quart import Quart, jsonify
 from quart_cors import cors
 from dotenv import load_dotenv
-from db.session import engine, Base
-from app.register_blueprints import register_blueprints
+from backend.db.session import engine
+from backend.db.models import Base
+from backend.app.register_blueprints import register_blueprints
 from werkzeug.exceptions import HTTPException
 
 

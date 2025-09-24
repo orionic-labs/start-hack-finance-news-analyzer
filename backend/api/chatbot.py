@@ -1,6 +1,6 @@
 # api/chatbot.py
 from quart import Blueprint, jsonify, request
-from pipelines.chatbot import graph as chatbot_graph
+from backend.pipelines.chatbot import graph as chatbot_graph
 import ast
 from langchain_core.messages import HumanMessage
 

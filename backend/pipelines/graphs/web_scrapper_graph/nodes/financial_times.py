@@ -32,7 +32,6 @@ def parse_ft_markets(md: str):
     for m in matches:
         title, url = m.groups()
 
-        # фильтруем мусор
         if not title.strip():
             continue
         if any(x in title.lower() for x in [
@@ -42,7 +41,6 @@ def parse_ft_markets(md: str):
         if url in seen:
             continue
 
-        # ищем картинку рядом
         after_text = md[m.end(): m.end() + 500]
         img_match = re.search(r"!\[.*?\]\((https://www\.ft\.com/__origami/service/image[^\)]+)\)", after_text)
         image_url = img_match.group(1) if img_match else None

@@ -1,11 +1,11 @@
 # api/clients.py
 from quart import Blueprint, jsonify, request
 from sqlalchemy import text
-from db.session import SessionLocal
+from backend.db.session import SessionLocal
 from pydantic import ValidationError
 from typing import Dict, Any
-from schemas import AddClientPayload, UpdatePortfolioPayload
-from db.models import Client, Allocation
+from backend.schemas import AddClientPayload, UpdatePortfolioPayload
+from backend.db.models import Client, Allocation
 
 bp = Blueprint("clients", __name__)
 

@@ -1,6 +1,6 @@
 # api/podcasts.py
 from quart import jsonify, Blueprint
-from pipelines.podcast import create_podcast
+from backend.pipelines.podcast import create_podcast
 
 bp = Blueprint("podcasts", __name__)
 

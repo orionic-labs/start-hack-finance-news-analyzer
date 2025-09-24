@@ -19,26 +19,22 @@ COOKIES_FILE = "cookies.json"
 def parse_reuters_news(md: str):
     articles = []
 
-    # Разбиваем по картинкам (каждая новость начинается с ![...](img))
     blocks = re.split(r"!\[.*?\]\((https://[^\)]+)\)", md)
 
     for i in range(1, len(blocks), 2):
         image_url = blocks[i]
         block_text = blocks[i+1] if i+1 < len(blocks) else ""
 
-        # title + link (берем первый непустой линк на reuters)
         m = re.search(r"\[([^\]]+?)\]\((https://www\.reuters\.com[^\)]+)\)", block_text)
         if not m:
             continue
         title, link = m.groups()
 
-        # если "category" в title → это не заголовок, ищем следующий
         if "category" in title.lower() or not title.strip():
             m2 = re.search(r"\[([^\]]+?)\]\((https://www\.reuters\.com[^\)]+)\)", block_text[m.end():])
             if m2:
                 title, link = m2.groups()
 
-        # date (ищем строку после заголовка)
         date_match = re.search(
             r"([A-Z][a-z]+ \d{1,2}, \d{4}(?: · \d{1,2}:\d{2} [AP]M GMT\+\d+)?)",
             block_text
@@ -85,14 +81,14 @@ async def main(state: InitState) -> OverallState:
 
     async with AsyncWebCrawler(config=browser_cfg) as crawler:
         script = """
-            WAIT 10
-            IF (EXISTS `#onetrust-accept-btn-handler`) THEN CLICK `#onetrust-accept-btn-handler`
             WAIT 5
+            IF (EXISTS `#onetrust-accept-btn-handler`) THEN CLICK `#onetrust-accept-btn-handler`
+            WAIT 3
             """
         run_cfg = CrawlerRunConfig(c4a_script=script, exclude_external_links=True)
         result = await crawler.arun(url=state["link"], config=run_cfg)
         articles = parse_reuters_news(result.markdown)
-        articles = articles[:1]
+        articles = articles[:3]
         return articles
 
 

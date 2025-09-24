@@ -21,18 +21,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.models import Article
 from backend.db.types import Vector1536
+from backend.pipelines.graphs.company_sentiment_analysis_graph.graph import graph as company_sentiment_analysis_graph
 
 
 # --- Nodes ---
 
 
 async def node_insert(state: GraphState) -> GraphState:
-    status, ref_url, metric = await insert_article(state["article_row"])
+    status, ref_url, metric, article_id = await insert_article(state["article_row"])
     state["insert_status"] = status
     if ref_url:
         state["insert_ref_url"] = ref_url
     if metric is not None:
         state["insert_metric"] = metric
+    if article_id is not None:
+        state["insert_article_id"] = article_id
+
     return state
 
 
@@ -46,7 +50,10 @@ def route_after_insert(state: GraphState) -> str:
 
 async def node_fetch_related(state: GraphState) -> GraphState:
     async with AsyncSessionLocal() as session:
-        primary = await session.get(Article, state["article_row"]["url"])
+        result = await session.execute(
+            select(Article).where(Article.url == state["article_row"]["url"])
+        )
+        primary = result.scalars().first()
         if not primary:
             state["related_articles"] = []
             return state
@@ -54,6 +61,7 @@ async def node_fetch_related(state: GraphState) -> GraphState:
         emb = primary.content_emb or embed_text(
             f"{primary.title or ''}\n\n{primary.summary or ''}"
         )
+        # emb_str = "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
         dist = Article.content_emb.op("<=>")(cast(bindparam("emb"), Vector1536()))
         result = await session.execute(
             select(
@@ -94,7 +102,9 @@ async def node_analyze(state: GraphState) -> GraphState:
         rag = await get_brand_snippets(session, qtext, k=3)
 
         # Build primary dict from DB row for consistency
-        pr = await session.get(Article, state["article_row"]["url"])
+        stmt = select(Article).where(Article.url == state["article_row"]["url"])
+        result = await session.execute(stmt)
+        pr = result.scalar_one_or_none()
         primary = {
             "url": pr.url,
             "title": pr.title,
@@ -143,6 +153,7 @@ graph_builder.add_node("insert", node_insert)
 graph_builder.add_node("fetch_related", node_fetch_related)
 graph_builder.add_node("analyze", node_analyze)
 graph_builder.add_node("verify_and_persist", node_verify_and_persist)
+graph_builder.add_node("sentiment_analysis", company_sentiment_analysis_graph)
 
 graph_builder.add_edge(START, "normalize_article")
 graph_builder.add_edge("normalize_article", "insert")
@@ -151,7 +162,8 @@ graph_builder.add_conditional_edges(
 )
 graph_builder.add_edge("fetch_related", "analyze")
 graph_builder.add_edge("analyze", "verify_and_persist")
-graph_builder.add_edge("verify_and_persist", END)
+graph_builder.add_edge("verify_and_persist", "sentiment_analysis")
+graph_builder.add_edge("sentiment_analysis", END)
 
 graph = graph_builder.compile()
 
