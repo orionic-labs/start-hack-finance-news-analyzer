@@ -125,7 +125,9 @@ MUST DO:
 - Be explicit on: agenda, channels of transmission, time horizon (short/medium/long), and confidence.
 - Translate article content into cross-asset implications: FX, Gold, Govvies, Corp bonds, US/EU/EM/JP equities.
 - Add a scenario table (Base/Bear/Bull) with triggers and portfolio tilts.
-- For EACH client, map portfolio exposures to the article’s risks/opportunities and list concrete actions (hedges, rebalancing %, stop-loss/entry levels where relevant).
+- Provide generic, anonymized portfolio impacts and suggested actions 
+  (hedges, rebalancing %, stop-loss/entry levels where relevant).
+- Absolutely NO client names or individual portfolio details may appear.
 - Keep numbers realistic and labeled as estimates when inferred.
 
 TONE:
@@ -134,13 +136,13 @@ TONE:
 
 OUTPUT FORMAT (Markdown, exactly these sections):
 # Titel
-## Executive Summary
+## Zusammenfassung für Entscheidungsträger
 ## Artikel-Agenda
 ## Marktauswirkungen (nach Anlageklasse)
 ## FX- und Rohstoffsicht
 ## Regional- & Sektorimpulse
 ## Szenarien (Base / Bear / Bull)
-## Kunden-Impakts & Maßnahmen
+## Kunden-Impakts & Maßnahmen(anonymisiert, ohne Kundennamen)
 ## Risiken & Unsicherheiten
 ## Anhang: Methodik & Annahmen
 """
