@@ -11,6 +11,7 @@ class GraphState(TypedDict):
     article_row: Dict[str, Any]
     insert_status: str
     insert_ref_url: str
+    insert_article_id: int
     insert_metric: Any
     related_articles: List[Dict[str, Any]]
     analysis: Dict[str, Any]

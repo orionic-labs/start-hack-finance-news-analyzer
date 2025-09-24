@@ -1,7 +1,7 @@
 # api/news.py
 from quart import Blueprint, jsonify, request
 from sqlalchemy import text
-from db.session import SessionLocal
+from backend.db.session import SessionLocal
 from pydantic import ValidationError
 from backend.schemas import AnalyzeNewsRequest, ImportancePayload
 

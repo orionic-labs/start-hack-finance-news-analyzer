@@ -13,7 +13,7 @@ def get_cnbc_articles_with_images(state: InitState):
     feed = feedparser.parse(state["link"])
     articles = []
 
-    for entry in feed.entries[:1]:
+    for entry in feed.entries[1:3]:
         title = entry.title
         link = entry.link
 
@@ -47,7 +47,6 @@ async def load_cookies():
 
 
 async def main(state: InitState) -> OverallState:
-    # RSS не требует Selenium/Crawl4AI — просто сразу парсим
     articles = get_cnbc_articles_with_images(state)
     return articles
 

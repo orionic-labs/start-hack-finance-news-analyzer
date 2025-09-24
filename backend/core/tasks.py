@@ -8,7 +8,7 @@ from pipelines.graphs.graph import graph
 def register_tasks(app):
     tasks = QuartTasks(app)
 
-    @tasks.periodic(timedelta(seconds=5300))
+    @tasks.periodic(timedelta(seconds=300))
     async def schedule():
         sources = [
             "https://www.cnbc.com/id/100003114/device/rss/rss.html",

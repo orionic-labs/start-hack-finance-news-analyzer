@@ -2,11 +2,11 @@
 from quart import Blueprint, jsonify, make_response, request
 import anyio, os, tempfile
 from datetime import datetime
-from schemas import SendEmailRequest
+from backend.schemas import SendEmailRequest
 from pydantic import ValidationError
-from utils.mail import send_email_async
-from scripts.general_report_generator import Customer, call_llm
-from scripts.render_report_pdf import render_report_pdf
+from backend.utils.mail import send_email_async
+from backend.scripts.general_report_generator import Customer, call_llm
+from backend.scripts.render_report_pdf import render_report_pdf
 
 bp = Blueprint("reports", __name__)
 

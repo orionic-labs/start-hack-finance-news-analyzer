@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ENDPOINT = os.getenv("WX_ENDPOINT")   # скопируй из IBM API вкладки
-API_KEY  = os.getenv("WX_API_KEY")    # твой User API key
+ENDPOINT = os.getenv("WX_ENDPOINT")
+API_KEY  = os.getenv("WX_API_KEY")
 
 def get_iam_token(api_key: str) -> str:
     resp = requests.post(
@@ -39,7 +39,7 @@ def rag_call(state: ChatState) -> ChatState:
     }
 
     r = requests.post(
-        ENDPOINT,   # бери public endpoint вида .../ai_service?version=2021-05-01
+        ENDPOINT,
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
@@ -55,7 +55,6 @@ def rag_call(state: ChatState) -> ChatState:
         raise
 
     data = r.json()
-    # IBM может вернуть {"results":[{"generated_text": "..."}]}
     answer = None
     if "results" in data:
         answer = data["results"][0].get("generated_text") or str(data["results"][0])
