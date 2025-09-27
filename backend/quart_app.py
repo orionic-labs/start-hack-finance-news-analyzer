@@ -8,10 +8,7 @@ from quart_cors import cors  # <-- add this
 app = create_app()
 app = cors(
     app,
-    allow_origin=[
-        r"https://.*\.vercel\.app",  # any Vercel subdomain
-        "http://localhost:3000",  # local dev frontend
-    ],
+    allow_origin="*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
