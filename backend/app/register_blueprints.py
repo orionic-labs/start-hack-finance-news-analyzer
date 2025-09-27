@@ -8,6 +8,7 @@ from backend.api.chatbot import bp as chatbot_bp
 from backend.api.accounts import bp as accounts_bp
 from backend.api.sources import bp as sources_bp
 from backend.api.clients import bp as clients_bp
+from backend.api.kpis import bp as kpis_bp
 
 
 def register_blueprints(app: Quart) -> None:
@@ -19,3 +20,4 @@ def register_blueprints(app: Quart) -> None:
     app.register_blueprint(accounts_bp, url_prefix="/api")
     app.register_blueprint(sources_bp, url_prefix="/api")
     app.register_blueprint(clients_bp, url_prefix="/api")
+    app.register_blueprint(kpis_bp, url_prefix="/api")
