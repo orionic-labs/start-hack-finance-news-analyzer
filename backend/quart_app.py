@@ -1,6 +1,8 @@
 # quart_app.py
 import re
 from quart_cors import cors
+
+# server entrypoint (Quart)
 from backend.app import create_app
 from core.tasks import register_tasks
 
@@ -18,15 +20,16 @@ ALLOWED = [
 app = create_app()
 tasks = register_tasks(app)
 
+
 app = cors(
     app,
     allow_origin=ALLOWED,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-    expose_headers=["Content-Type", "Content-Length"],
+    expose_headers=["Content-Type", "Content-Length", "ngrok-skip-browser-warning"],
     max_age=600,
 )
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # fix the dunder name
     app.run(debug=True, host="0.0.0.0", port=5001)
