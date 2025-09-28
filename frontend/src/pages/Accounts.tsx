@@ -1,13 +1,14 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Plus, Edit3, Trash2, ExternalLink } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import api from '@/lib/axios';
+import { AxiosError } from 'axios';
 
 const accountsL = [
     {
@@ -37,94 +38,85 @@ const accountsL = [
 ];
 
 export default function Accounts() {
-    const [accounts, setAccounts] = useState(accountsL); // Start with mock data
+    const [accounts, setAccounts] = useState(accountsL);
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState(null);
+    const [error, setError] = useState<string | null>(null);
+
     const [platform, setPlatform] = useState('');
     const [link, setLink] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [isDialogOpen, setIsDialogOpen] = useState(false);
+
     useEffect(() => {
         fetchAccounts();
     }, []);
+
     const fetchAccounts = async () => {
+        setIsLoading(true);
+        setError(null);
         try {
-            setIsLoading(true);
-            const response = await fetch('http://localhost:5001/api/accounts/list');
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch accounts');
+            const res = await api.get('/accounts/list');
+            setAccounts(res.data);
+        } catch (e: unknown) {
+            if (e instanceof AxiosError) {
+                console.error('Error fetching accounts:', e);
+                setError(e.response?.data?.message || e.message || 'Failed to fetch accounts.');
+            } else {
+                console.error('Unexpected error fetching accounts:', e);
+                setError('Unexpected error while fetching accounts.');
             }
-
-            const data = await response.json();
-            setAccounts(data);
-        } catch (err) {
-            console.error('Error fetching accounts:', err);
-            setError(err.message);
-            // Keep using mock data as fallback
         } finally {
             setIsLoading(false);
         }
     };
+
     const handleAddAccount = async () => {
         try {
-            const response = await fetch('http://localhost:5001/api/accounts/add', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    platform,
-                    link,
-                    username,
-                    password,
-                }),
+            await api.post('/accounts/add', {
+                platform,
+                link,
+                username,
+                password,
             });
 
-            if (!response.ok) {
-                throw new Error('Failed to add account');
-            }
-
-            // Refresh accounts list
             await fetchAccounts();
 
-            // Reset form
             setPlatform('');
             setLink('');
             setUsername('');
             setPassword('');
             setIsDialogOpen(false);
-        } catch (error) {
-            console.error('Error adding account:', error);
-            alert('Failed to add account. Please try again.');
+        } catch (e: unknown) {
+            if (e instanceof AxiosError) {
+                console.error('Error adding account:', e);
+                alert(e.response?.data?.message || e.message || 'Failed to add account.');
+            } else {
+                console.error('Unexpected error adding account:', e);
+                alert('Unexpected error while adding account.');
+            }
         }
     };
-    const handleDeleteAccount = async (accountId) => {
+
+    const handleDeleteAccount = async (accountId: number) => {
         if (!confirm('Are you sure you want to delete this account?')) {
             return;
         }
 
         try {
-            const response = await fetch('http://localhost:5001/api/accounts/delete', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ id: accountId }),
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to delete account');
-            }
-
-            // Refresh accounts list
+            await api.post('/accounts/delete', { id: accountId });
             await fetchAccounts();
-        } catch (error) {
-            console.error('Error deleting account:', error);
-            alert('Failed to delete account. Please try again.');
+        } catch (e: unknown) {
+            if (e instanceof AxiosError) {
+                console.error('Error deleting account:', e);
+                alert(e.response?.data?.message || e.message || 'Failed to delete account.');
+            } else {
+                console.error('Unexpected error deleting account:', e);
+                alert('Unexpected error while deleting account.');
+            }
         }
     };
+
     const getStatusBadge = (status: string) => {
         return status === 'connected' ? (
             <Badge className="bg-dashboard-success/10 text-dashboard-success border-dashboard-success/20">Connected</Badge>
@@ -201,6 +193,9 @@ export default function Accounts() {
                     </DialogContent>
                 </Dialog>
             </div>
+
+            {isLoading && <p className="text-muted-foreground">Loading accounts…</p>}
+            {error && <p className="text-red-500">{error}</p>}
 
             <div className="grid gap-4">
                 {accounts.map((account) => (
