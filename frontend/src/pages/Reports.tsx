@@ -1,4 +1,8 @@
-import { useState } from "react";
+// src/pages/Reports.tsx
+import { useEffect, useState } from "react";
+import api from "@/lib/axios";
+import { AxiosError } from "axios";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,108 +19,101 @@ import {
   Send,
   Download,
   RefreshCw,
-  Settings,
   Edit,
   TrendingUp,
   FileText,
   Users,
 } from "lucide-react";
-import { HalfCircleGauge } from "../components/ui/half-circle-gauge";
+import { HalfCircleGauge } from "@/components/ui/half-circle-gauge";
 
-const availableMarkets = [
-  "FX (USD, CHF, EUR, JPY)",
-  "Gold",
-  "Global Government Bonds",
-  "Global Corporate bonds",
-  "USA Equities",
-  "Emerging Markets",
-  "EU(incl. UK and CH) Equities",
-  "Japan Equities",
-];
+// --- shared types ---
+type News = {
+  id: string;
+  url: string;
+  title: string;
+  summary: string;
+  photo?: string | null;
+  markets: string[];
+  clients: string[];
+  importance?: "low" | "medium" | "high";
+  isImportant: boolean;
+  publishedAt: string | null;
+  source: string;
+  communitySentiment: number;
+  trustIndex: number;
+  generatedReport?: string;
+};
 
-const availableClients = [
-  "JP Morgan",
-  "Goldman Sachs",
-  "Bank of America",
-  "Morgan Stanley",
-  "Wells Fargo",
-  "Deutsche Bank",
-  "BNP Paribas",
-  "Credit Suisse",
-  "UBS",
-  "Barclays",
-  "Shell",
-  "ExxonMobil",
-  "Chevron",
-  "BP",
-  "Total",
-  "Microsoft",
-  "Apple",
-  "Google",
-  "Amazon",
-  "Meta",
-  "HSBC",
-  "Standard Chartered",
-  "Citigroup",
-  "BlackRock",
-  "Vanguard",
-];
+type Client = {
+  id: number;
+  name: string;
+  status: string;
+  portfolio: Record<string, number>;
+  email?: string;
+};
 
-const importantNews = [
-  {
-    id: 1,
-    title: "Federal Reserve Announces Interest Rate Decision",
-    summary:
-      "The Federal Reserve has decided to maintain current interest rates at 5.25-5.50% amid ongoing economic uncertainty and persistent inflation concerns. The decision comes after careful consideration of recent economic data showing mixed signals in employment and consumer spending patterns.",
-    photo:
-      "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=400&h=200&fit=crop",
-    markets: ["USD", "Bonds", "Equities", "Forex"],
-    clients: ["JP Morgan", "Goldman Sachs", "Bank of America"],
-    publishedAt: "2024-01-15T14:30:00Z",
-    source: "Reuters",
-    generatedReport:
-      "This Federal Reserve decision to maintain interest rates at 5.25-5.50% reflects the central bank's cautious approach amid mixed economic signals. The decision will likely impact bond yields and equity valuations across multiple sectors. Key implications for your portfolio include potential shifts in fixed income strategies and currency hedging approaches.",
-    communitySentiment: 72,
-    trustIndex: 89,
-  },
-  {
-    id: 2,
-    title: "Oil Prices Surge Following OPEC Meeting",
-    summary:
-      "Crude oil prices jumped 3.2% after OPEC+ announced unexpected production cuts of 1.2 million barrels per day. The decision has sent shockwaves through energy markets and is expected to impact global inflation rates.",
-    photo:
-      "https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=200&fit=crop",
-    markets: ["Energy", "Commodities", "Oil", "Gas"],
-    clients: ["Shell", "ExxonMobil", "Chevron"],
-    publishedAt: "2024-01-15T13:15:00Z",
-    source: "Bloomberg",
-    generatedReport:
-      "The OPEC+ production cut of 1.2 million barrels per day represents a significant tightening of global oil supply. This development will likely lead to sustained higher energy prices, affecting downstream industries and consumer inflation. Energy sector equities may see upward pressure while transportation and manufacturing costs could rise.",
-    communitySentiment: 45,
-    trustIndex: 92,
-  },
-];
-
-const mockClients = [
-  { id: 1, name: "Goldman Sachs", email: "reports@goldmansachs.com" },
-  { id: 2, name: "JP Morgan", email: "analysis@jpmorgan.com" },
-  { id: 3, name: "BlackRock", email: "research@blackrock.com" },
-  { id: 4, name: "ExxonMobil", email: "intelligence@exxonmobil.com" },
-  { id: 5, name: "Chevron", email: "reports@chevron.com" },
-  { id: 6, name: "Shell", email: "analysis@shell.com" },
-];
-
-interface ReportItemProps {
-  news: (typeof importantNews)[0];
-  onUpdateReport: (id: number, report: string) => void;
-  onUpdateNews: (
-    id: number,
-    updates: Partial<(typeof importantNews)[0]>
-  ) => void;
+// --- helpers ---
+function uid() {
+  return (
+    crypto?.randomUUID?.() ??
+    `id_${Date.now()}_${Math.random().toString(16).slice(2)}`
+  );
 }
 
-function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
-  const [editingReport, setEditingReport] = useState(news.generatedReport);
+const norm = (s?: string) => (s ?? "").trim().toLowerCase();
+
+function resolveClientsForMarkets(
+  markets: string[],
+  clientsList: Client[]
+): string[] {
+  if (
+    !Array.isArray(markets) ||
+    markets.length === 0 ||
+    clientsList.length === 0
+  )
+    return [];
+  const mset = new Set(markets.map(norm));
+  const targeted: string[] = [];
+  for (const c of clientsList) {
+    const pf = c?.portfolio ?? {};
+    for (const [asset, pct] of Object.entries(pf)) {
+      if ((pct ?? 0) > 0 && mset.has(norm(asset))) {
+        targeted.push(c.name);
+        break;
+      }
+    }
+  }
+  return Array.from(new Set(targeted));
+}
+
+const unionStrings = (a: string[], b: string[]) =>
+  Array.from(new Set([...(a ?? []), ...(b ?? [])]));
+
+const normalizeBool = (v: unknown): boolean => {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "string")
+    return ["true", "t", "1", "yes", "y"].includes(v.toLowerCase());
+  return false;
+};
+
+// --- Report Item ---
+interface ReportItemProps {
+  news: News;
+  clients: Client[];
+  onUpdateReport: (id: string, report: string) => void;
+  onUpdateNews: (id: string, updates: Partial<News>) => void;
+}
+
+function ReportItem({
+  news,
+  clients,
+  onUpdateReport,
+  onUpdateNews,
+}: ReportItemProps) {
+  const [editingReport, setEditingReport] = useState(
+    news.generatedReport ?? ""
+  );
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [selectedClients, setSelectedClients] = useState<number[]>([]);
@@ -131,7 +128,6 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
   );
 
   const handleSendToClients = () => {
-    // Simulate sending to selected clients
     console.log("Sending report to clients:", selectedClients);
     setSendDialogOpen(false);
     setSelectedClients([]);
@@ -141,48 +137,22 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
     try {
       setIsDownloading(true);
 
-      const response = await fetch(
-        "http://localhost:5001/api/reports/download_pdf",
+      const response = await api.post(
+        "/reports/download_pdf",
         {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            text: editingReport || news.summary, // Send the news text for processing
-            filename: `financial_report_${news.id}.pdf`,
-            company: "Wellershoff & Partners",
-            report_title: news.title,
-            report_date: new Date().toISOString().split("T")[0],
-            logo_path: "frontend/public/WPlogo.png",
-            include_cover: true,
-            customers: [
-              {
-                name: "John Doe Portfolio",
-                portfolio: {
-                  "FX (USD, CHF, EUR, JPY)": 15.0,
-                  Gold: 5.0,
-                  "Global Government Bonds": 20.0,
-                  "Global Corporate bonds": 10.0,
-                  "USA Equities": 25.0,
-                  "Emerging Markets": 10.0,
-                  "EU(incl. UK and CH) Equities": 10.0,
-                  "Japan Equities": 5.0,
-                },
-                notes: "Conservative investor focused on stability",
-              },
-              // Add more customers as needed
-            ],
-          }),
-        }
+          text: editingReport || news.summary,
+          filename: `financial_report_${news.id}.pdf`,
+          company: "Wellershoff & Partners",
+          report_title: news.title,
+          report_date: new Date().toISOString().split("T")[0],
+          logo_path: "frontend/public/WPlogo.png",
+          include_cover: true,
+          customers: clients, // 🔑 real clients
+        },
+        { responseType: "blob" } // ✅ important to get PDF
       );
 
-      if (!response.ok) {
-        throw new Error("Failed to generate PDF");
-      }
-
-      // Handle the PDF download
-      const blob = await response.blob();
+      const blob = new Blob([response.data], { type: "application/pdf" });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -201,73 +171,25 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
 
   const handleRegenerate = async () => {
     try {
-      setIsRegenerating(true); // Add loading state
+      setIsRegenerating(true);
 
-      const response = await fetch(
-        "http://0.0.0.0:5001/api/reports/regenerate",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            title: news.title,
-            text: editingReport || news.summary,
-            markets: news.markets,
-            source: news.source,
-            publishedAt: news.publishedAt,
-            customers: [
-              {
-                name: "John Doe Portfolio",
-                portfolio: {
-                  "FX (USD, CHF, EUR, JPY)": 15.0,
-                  Gold: 5.0,
-                  "Global Government Bonds": 20.0,
-                  "Global Corporate bonds": 10.0,
-                  "USA Equities": 25.0,
-                  "Emerging Markets": 10.0,
-                  "EU(incl. UK and CH) Equities": 10.0,
-                  "Japan Equities": 5.0,
-                },
-                notes: "Conservative investor focused on stability",
-              },
-              {
-                name: "Tech Growth Fund",
-                portfolio: {
-                  "FX (USD, CHF, EUR, JPY)": 10.0,
-                  Gold: 2.0,
-                  "Global Government Bonds": 5.0,
-                  "Global Corporate bonds": 8.0,
-                  "USA Equities": 40.0,
-                  "Emerging Markets": 20.0,
-                  "EU(incl. UK and CH) Equities": 12.0,
-                  "Japan Equities": 3.0,
-                },
-                notes: "Aggressive growth strategy with tech focus",
-              },
-              // Add more customers as needed
-            ],
-            // Add any other news data you want to send
-          }),
-        }
-      );
+      const { data } = await api.post("/reports/regenerate", {
+        title: news.title,
+        text: editingReport || news.summary,
+        markets: news.markets,
+        source: news.source,
+        publishedAt: news.publishedAt,
+        customers: clients,
+      });
 
-      if (!response.ok) {
-        throw new Error("Failed to regenerate report");
-      }
-
-      const result = await response.json();
-
-      // Wait for the response and update with the returned report
-      const generatedReport = result.generatedReport || result.answer;
+      const generatedReport = data.generatedReport || data.answer;
       setEditingReport(generatedReport);
       onUpdateReport(news.id, generatedReport);
     } catch (error) {
       console.error("Error regenerating report:", error);
-      // Show error message to user
       alert("Failed to regenerate report. Please try again.");
     } finally {
-      setIsRegenerating(false); // Remove loading state
+      setIsRegenerating(false);
     }
   };
 
@@ -281,19 +203,13 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
     setEditClientsOpen(false);
   };
 
-  const formatTime = (timestamp: string) => {
+  const formatTime = (timestamp: string | null) => {
+    if (!timestamp) return "—";
     const date = new Date(timestamp);
-    const now = new Date();
-    const diffInMinutes = Math.floor(
-      (now.getTime() - date.getTime()) / (1000 * 60)
-    );
-
-    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
-    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
     return date.toLocaleDateString();
   };
 
-  const affectedClients = mockClients.filter((client) =>
+  const affectedClients = clients.filter((client) =>
     news.clients.includes(client.name)
   );
 
@@ -322,147 +238,144 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
       <CardContent className="space-y-5">
         <p className="text-sm text-gray-600 leading-relaxed">{news.summary}</p>
 
-        <div className="space-y-4">
-          <div className="bg-blue-50/50 rounded-lg p-3 border border-blue-100">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="text-sm font-semibold text-blue-900">
-                Markets Influenced
-              </h4>
-              <Dialog open={editMarketsOpen} onOpenChange={setEditMarketsOpen}>
-                <DialogTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 text-blue-600 hover:text-blue-800"
-                  >
-                    <Edit className="h-3 w-3" />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Edit Influenced Markets</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 max-h-80 overflow-y-auto">
-                    {availableMarkets.map((market) => (
-                      <div key={market} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`market-${market}`}
-                          checked={selectedMarkets.includes(market)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedMarkets([...selectedMarkets, market]);
-                            } else {
-                              setSelectedMarkets(
-                                selectedMarkets.filter((m) => m !== market)
-                              );
-                            }
-                          }}
-                        />
-                        <label htmlFor={`market-${market}`} className="text-sm">
-                          {market}
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setEditMarketsOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button onClick={handleSaveMarkets}>Save Changes</Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {news.markets.map((market) => (
-                <Badge
-                  key={market}
-                  variant="secondary"
-                  className="text-xs bg-blue-100 text-blue-800 hover:bg-blue-200"
+        {/* Markets */}
+        <div className="bg-blue-50/50 rounded-lg p-3 border border-blue-100">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-blue-900">
+              Markets Influenced
+            </h4>
+            <Dialog open={editMarketsOpen} onOpenChange={setEditMarketsOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-blue-600 hover:text-blue-800"
                 >
-                  {market}
-                </Badge>
-              ))}
-            </div>
+                  <Edit className="h-3 w-3" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Edit Influenced Markets</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 max-h-80 overflow-y-auto">
+                  {selectedMarkets.map((market) => (
+                    <div key={market} className="flex items-center space-x-2">
+                      <Checkbox
+                        checked={selectedMarkets.includes(market)}
+                        onCheckedChange={(checked) => {
+                          if (checked)
+                            setSelectedMarkets([...selectedMarkets, market]);
+                          else
+                            setSelectedMarkets(
+                              selectedMarkets.filter((m) => m !== market)
+                            );
+                        }}
+                      />
+                      <span>{market}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setEditMarketsOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={handleSaveMarkets}>Save Changes</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
-
-          <div className="bg-green-50/50 rounded-lg p-3 border border-green-100">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="text-sm font-semibold text-green-900">
-                Affected Clients
-              </h4>
-              <Dialog open={editClientsOpen} onOpenChange={setEditClientsOpen}>
-                <DialogTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 text-green-600 hover:text-green-800"
-                  >
-                    <Edit className="h-3 w-3" />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Edit Influenced Clients</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 max-h-80 overflow-y-auto">
-                    {availableClients.map((client) => (
-                      <div key={client} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`client-${client}`}
-                          checked={selectedClientsEdit.includes(client)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedClientsEdit([
-                                ...selectedClientsEdit,
-                                client,
-                              ]);
-                            } else {
-                              setSelectedClientsEdit(
-                                selectedClientsEdit.filter((c) => c !== client)
-                              );
-                            }
-                          }}
-                        />
-                        <label htmlFor={`client-${client}`} className="text-sm">
-                          {client}
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setEditClientsOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button onClick={handleSaveClients}>Save Changes</Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {news.clients.map((client) => (
-                <Badge
-                  key={client}
-                  variant="outline"
-                  className="text-xs border-green-200 text-green-800 hover:bg-green-50"
-                >
-                  {client}
-                </Badge>
-              ))}
-            </div>
+          <div className="flex flex-wrap gap-1">
+            {news.markets.map((market) => (
+              <Badge
+                key={market}
+                variant="secondary"
+                className="text-xs bg-blue-100 text-blue-800 hover:bg-blue-200"
+              >
+                {market}
+              </Badge>
+            ))}
           </div>
         </div>
 
+        {/* Clients */}
+        <div className="bg-green-50/50 rounded-lg p-3 border border-green-100">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold text-green-900">
+              Affected Clients
+            </h4>
+            <Dialog open={editClientsOpen} onOpenChange={setEditClientsOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-green-600 hover:text-green-800"
+                >
+                  <Edit className="h-3 w-3" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Edit Influenced Clients</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 max-h-80 overflow-y-auto">
+                  {clients.map((client) => (
+                    <div
+                      key={client.id}
+                      className="flex items-center space-x-2"
+                    >
+                      <Checkbox
+                        checked={selectedClientsEdit.includes(client.name)}
+                        onCheckedChange={(checked) => {
+                          if (checked)
+                            setSelectedClientsEdit([
+                              ...selectedClientsEdit,
+                              client.name,
+                            ]);
+                          else
+                            setSelectedClientsEdit(
+                              selectedClientsEdit.filter(
+                                (c) => c !== client.name
+                              )
+                            );
+                        }}
+                      />
+                      <span>{client.name}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setEditClientsOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={handleSaveClients}>Save Changes</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {news.clients.map((client) => (
+              <Badge
+                key={client}
+                variant="outline"
+                className="text-xs border-green-200 text-green-800 hover:bg-green-50"
+              >
+                {client}
+              </Badge>
+            ))}
+          </div>
+        </div>
+
+        {/* KPIs */}
         <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg p-4 border border-purple-100">
           <h4 className="text-sm font-semibold text-purple-900 mb-3 flex items-center gap-2">
-            <TrendingUp className="h-4 w-4" />
-            Key Performance Indicators
+            <TrendingUp className="h-4 w-4" /> Key Performance Indicators
           </h4>
           <div className="flex justify-around">
             <HalfCircleGauge
@@ -482,6 +395,7 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
           </div>
         </div>
 
+        {/* Report */}
         <div className="bg-amber-50/50 rounded-lg p-4 border border-amber-100">
           <h4 className="text-sm font-semibold text-amber-900 mb-3">
             Report Analysis
@@ -495,16 +409,16 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
           />
         </div>
 
+        {/* Actions */}
         <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-100">
           <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
             <DialogTrigger asChild>
               <Button
                 variant="default"
                 size="sm"
-                className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600"
+                className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-500"
               >
-                <Send className="h-4 w-4" />
-                Send to Clients
+                <Send className="h-4 w-4" /> Send to Clients
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -512,37 +426,24 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
                 <DialogTitle>Send Report to Clients</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Select clients to send this report to:
-                </p>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {affectedClients.map((client) => (
-                    <div
-                      key={client.id}
-                      className="flex items-center space-x-2"
-                    >
-                      <Checkbox
-                        id={`client-${client.id}`}
-                        checked={selectedClients.includes(client.id)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setSelectedClients([...selectedClients, client.id]);
-                          } else {
-                            setSelectedClients(
-                              selectedClients.filter((id) => id !== client.id)
-                            );
-                          }
-                        }}
-                      />
-                      <label
-                        htmlFor={`client-${client.id}`}
-                        className="text-sm"
-                      >
-                        {client.name} ({client.email})
-                      </label>
-                    </div>
-                  ))}
-                </div>
+                {affectedClients.map((client) => (
+                  <div key={client.id} className="flex items-center space-x-2">
+                    <Checkbox
+                      checked={selectedClients.includes(client.id)}
+                      onCheckedChange={(checked) => {
+                        if (checked)
+                          setSelectedClients([...selectedClients, client.id]);
+                        else
+                          setSelectedClients(
+                            selectedClients.filter((id) => id !== client.id)
+                          );
+                      }}
+                    />
+                    <span>
+                      {client.name} ({client.email ?? "no email"})
+                    </span>
+                  </div>
+                ))}
                 <div className="flex justify-end gap-2">
                   <Button
                     variant="outline"
@@ -567,19 +468,12 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
             size="sm"
             onClick={handleDownloadPDF}
             disabled={isDownloading}
-            className="flex items-center gap-2 hover:bg-green-50 hover:border-green-300 hover:text-green-600 bg-transparent"
           >
-            <Download className="h-4 w-4" />
-            Download PDF
+            <Download className="h-4 w-4" /> Download PDF
           </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRegenerate}
-            className="flex items-center gap-2 hover:bg-purple-50 hover:border-purple-300 hover:text-purple-600 bg-transparent"
-          >
-            <RefreshCw className="h-4 w-4" />
+          <Button variant="outline" size="sm" onClick={handleRegenerate}>
+            <RefreshCw className="h-4 w-4" />{" "}
             {isRegenerating ? "Regenerating..." : "Regenerate"}
           </Button>
         </div>
@@ -593,20 +487,71 @@ function ReportItem({ news, onUpdateReport, onUpdateNews }: ReportItemProps) {
   );
 }
 
+// --- Reports Page ---
 export default function Reports() {
-  // const [reports, setReports] = useState(newsReports);
-  const [newsReports, setNewsReports] = useState(importantNews);
+  const [newsReports, setNewsReports] = useState<News[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const handleUpdateReport = (id: number, report: string) => {
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const [newsResp, clientsResp] = await Promise.all([
+          api.get<Partial<News>[]>("/news/list"),
+          api.get<Client[]>("/clients/list"),
+        ]);
+
+        const rawNews = Array.isArray(newsResp.data) ? newsResp.data : [];
+        const rawClients = Array.isArray(clientsResp.data)
+          ? clientsResp.data
+          : [];
+        setClients(rawClients);
+
+        const mapped: News[] = rawNews.map((d) => {
+          const rawImp = d?.isImportant ?? null;
+          const markets = Array.isArray(d?.markets) ? d.markets : [];
+          const clientsCalc = resolveClientsForMarkets(markets, rawClients);
+
+          return {
+            id: d.id ?? uid(),
+            url: d.url ?? "",
+            title: d.title ?? "Untitled",
+            summary: d.summary ?? "",
+            photo: d.photo ?? null,
+            markets,
+            clients: clientsCalc,
+            importance: d.importance as "low" | "medium" | "high" | undefined,
+            isImportant: normalizeBool(rawImp),
+            publishedAt: d.publishedAt ?? null,
+            source: d.source ?? "Unknown",
+            communitySentiment: d.communitySentiment ?? 0,
+            trustIndex: d.trustIndex ?? 0,
+            generatedReport: d.generatedReport ?? "",
+          };
+        });
+
+        setNewsReports(mapped.filter((n) => n.isImportant));
+      } catch (e) {
+        setError(e instanceof AxiosError ? e.message : "Failed to fetch data");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleUpdateReport = (id: string, report: string) => {
     setNewsReports((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, report } : item))
+      prev.map((item) =>
+        item.id === id ? { ...item, generatedReport: report } : item
+      )
     );
   };
 
-  const handleUpdateNews = (
-    id: number,
-    updates: Partial<(typeof newsReports)[0]>
-  ) => {
+  const handleUpdateNews = (id: string, updates: Partial<News>) => {
     setNewsReports((prev) =>
       prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
     );
@@ -614,10 +559,10 @@ export default function Reports() {
 
   return (
     <div className="space-y-6">
-      {/* Stats Cards */}
+      {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-medium">
               Important News
             </CardTitle>
@@ -630,7 +575,7 @@ export default function Reports() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-medium">
               Affected Clients
             </CardTitle>
@@ -645,7 +590,7 @@ export default function Reports() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-medium">Reports Ready</CardTitle>
             <Send className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
@@ -663,19 +608,24 @@ export default function Reports() {
         </Card>
       </div>
 
-      {/* Reports Grid */}
+      {/* Reports */}
       <div className="grid gap-6 md:grid-cols-2">
-        {newsReports.map((news) => (
-          <ReportItem
-            key={news.id}
-            news={news}
-            onUpdateReport={handleUpdateReport}
-            onUpdateNews={handleUpdateNews}
-          />
-        ))}
+        {loading && <p className="text-muted-foreground">Loading reports…</p>}
+        {error && <p className="text-red-600">Error: {error}</p>}
+        {!loading &&
+          !error &&
+          newsReports.map((news) => (
+            <ReportItem
+              key={news.id}
+              news={news}
+              clients={clients}
+              onUpdateReport={handleUpdateReport}
+              onUpdateNews={handleUpdateNews}
+            />
+          ))}
       </div>
 
-      {newsReports.length === 0 && (
+      {!loading && !error && newsReports.length === 0 && (
         <div className="text-center py-12">
           <p className="text-muted-foreground">
             No important news items found for reporting.
