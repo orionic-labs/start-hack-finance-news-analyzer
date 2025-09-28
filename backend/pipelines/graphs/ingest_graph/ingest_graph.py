@@ -27,6 +27,12 @@ from backend.pipelines.graphs.company_sentiment_analysis_graph.graph import grap
 # --- Nodes ---
 
 
+ALLOWED_KEYS = {
+    "article_url", "cluster_ids", "event_type", "tickers", "companies", "sectors",
+    "geos", "numerics", "impact_score", "confidence", "novelty", "executive_summary",
+    "bullets", "actions", "risks", "citations", "important", "markets"
+}
+
 async def node_insert(state: GraphState) -> GraphState:
     status, ref_url, metric, article_id = await insert_article(state["article_row"])
     state["insert_status"] = status

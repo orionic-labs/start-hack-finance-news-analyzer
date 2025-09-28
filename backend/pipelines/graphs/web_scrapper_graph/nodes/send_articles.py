@@ -42,9 +42,11 @@ async def get_news_text(link):
 
     async with AsyncWebCrawler(config=browser_cfg) as crawler:
         script = """
-                    WAIT 10
-                    IF (EXISTS `#onetrust-accept-btn-handler`) THEN CLICK `#onetrust-accept-btn-handler`
-                    WAIT 5
+                WAIT 10
+                IF (EXISTS `#onetrust-accept-btn-handler`) THEN CLICK `#onetrust-accept-btn-handler`
+                IF (EXISTS `button:has-text("Alle akzeptieren")`) THEN CLICK `button:has-text("Alle akzeptieren")`
+                WAIT 5
+
                 """
         run_cfg = CrawlerRunConfig(c4a_script=script, exclude_external_links=True)
         result = await crawler.arun(url=link, config=run_cfg)

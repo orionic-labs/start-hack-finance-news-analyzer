@@ -19,6 +19,7 @@ async def insert_analysis_packet(
             VALUES
               (:url, :cluster_ids, :event_type, :tickers, :companies, :sectors, :geos, :numerics,
                :impact_score, :confidence, :novelty, :executive_summary, :bullets, :actions, :risks, :citations, :important, :markets)
+            ON CONFLICT (article_url) DO NOTHING;
             """
         ),
         {
@@ -46,5 +47,5 @@ async def insert_analysis_packet(
             "important": packet["importance"]["importance"],
         },
     )
-    if packet["importance"]["importance"] == 1:
-        await send_sms_alert(article_url, packet)
+    # if packet["importance"]["importance"] == 1:
+    #     await send_sms_alert(article_url, packet)

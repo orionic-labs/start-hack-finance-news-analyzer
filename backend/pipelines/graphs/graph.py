@@ -35,7 +35,7 @@ builder.add_edge("End of graph", END)
 graph = builder.compile()
 
 async def run():
-    print(await graph.ainvoke({"link": "https://www.cnbc.com/id/100003114/device/rss/rss.html"}))
+    print(await graph.ainvoke({"link": "https://finance.yahoo.com/news/"}))
 
 if __name__ == "__main__":
     asyncio.run(run())
