@@ -1,27 +1,23 @@
 # app/__init__.py
 from __future__ import annotations
+import os
 from quart import Quart, jsonify
-from quart_cors import cors
 from dotenv import load_dotenv
-from backend.db.session import engine
-from backend.db.models import Base
-from backend.app.register_blueprints import register_blueprints
 from werkzeug.exceptions import HTTPException
+from backend.app.register_blueprints import register_blueprints
 
 
 def create_app() -> Quart:
     load_dotenv()
     app = Quart(__name__)
-
-    # CORS (use your core.settings if you prefer)
-    app = cors(
-        app,
-        allow_origin=["http://localhost:5173", "http://127.0.0.1:5173"],
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
-        allow_credentials=True,
+    app.config.update(
+        JSON_SORT_KEYS=False,
+        SECRET_KEY=os.getenv("SECRET_KEY", "dev-secret"),
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_DOMAIN=None,
+        SESSION_COOKIE_PATH="/",
     )
-    app.config.update(JSON_SORT_KEYS=False)
 
     @app.errorhandler(HTTPException)
     async def http_err(e: HTTPException):
@@ -36,5 +32,5 @@ def create_app() -> Quart:
     async def init_db():
         pass
 
-    register_blueprints(app)  # /api/* endpoints
+    register_blueprints(app)
     return app
