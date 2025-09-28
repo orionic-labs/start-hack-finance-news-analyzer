@@ -75,9 +75,9 @@ async def load_cookies():
 
 async def main(state: InitState) -> OverallState:
     cookies = await load_cookies()
-    browser_cfg = BrowserConfig(headless=False, user_agent=(
+    browser_cfg = BrowserConfig(headless=True, user_agent=(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " "AppleWebKit/537.36 (KHTML, like Gecko) " "Chrome/120.0 Safari/537.36"),
-                                cookies=cookies, viewport_width=1920, viewport_height=1080,)
+                                cookies=cookies)
 
     async with AsyncWebCrawler(config=browser_cfg) as crawler:
         script = """
@@ -88,7 +88,7 @@ async def main(state: InitState) -> OverallState:
         run_cfg = CrawlerRunConfig(c4a_script=script, exclude_external_links=True)
         result = await crawler.arun(url=state["link"], config=run_cfg)
         articles = parse_reuters_news(result.markdown)
-        articles = articles[:3]
+        articles = articles[3:6]
         return articles
 
 

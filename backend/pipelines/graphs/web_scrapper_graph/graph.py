@@ -7,6 +7,8 @@ from backend.pipelines.graphs.web_scrapper_graph.nodes.gather_articles import ga
 from backend.pipelines.graphs.web_scrapper_graph.nodes.check_website import check_website
 from backend.pipelines.graphs.web_scrapper_graph.nodes.financial_times import get_posts_hardcoded_ft
 from backend.pipelines.graphs.web_scrapper_graph.nodes.cnbc import get_posts_hardcoded_cnbc
+from backend.pipelines.graphs.web_scrapper_graph.nodes.yahoo_finance import get_posts_hardcoded_yahoo
+
 
 import json
 
@@ -21,6 +23,7 @@ builder = StateGraph(OverallState,
 builder.add_node("Get Posts Reuters", get_posts_hardcoded)
 builder.add_node("Get Posts CNBC", get_posts_hardcoded_cnbc)
 builder.add_node("Get Posts FT", get_posts_hardcoded_ft)
+builder.add_node("Get Posts Yahoo Finance", get_posts_hardcoded_yahoo)
 builder.add_node("Parse Structured Post", parsed_struct_text)
 builder.add_node("Gather all Posts Together", gather_articles)
 
@@ -31,12 +34,14 @@ builder.add_conditional_edges(
     {
         "reuters": "Get Posts Reuters",
         "financial_times": "Get Posts FT",
+        "yahoo_finance": "Get Posts Yahoo Finance",
         "cnbc": "Get Posts CNBC",
     }
 )
 builder.add_conditional_edges("Get Posts Reuters", send_article, ["Parse Structured Post"])
 builder.add_conditional_edges("Get Posts FT", send_article, ["Parse Structured Post"])
 builder.add_conditional_edges("Get Posts CNBC", send_article, ["Parse Structured Post"])
+builder.add_conditional_edges("Get Posts Yahoo Finance", send_article, ["Parse Structured Post"])
 builder.add_edge("Parse Structured Post", "Gather all Posts Together")
 builder.add_edge("Gather all Posts Together", END)
 

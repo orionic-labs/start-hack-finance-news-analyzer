@@ -9,6 +9,8 @@ def check_website(state: InitState) -> InitState:
         answer = "financial_times"
     elif "reuters.com" in link:
         answer = "reuters"
+    elif "yahoo.com" in link:
+        answer = "yahoo_finance"
     elif "cnbc.com" in link:
         answer = "cnbc"
     else:
