@@ -1,9 +1,3 @@
 {
-    "rewrites": [
-        {
-            "source": "/api/(.*)",
-            "destination": "https://brakeless-noncomplacently-shandi.ngrok-free.dev/api/$1"
-        },
-        { "source": "/(.*)", "destination": "/" }
-    ]
+    "rewrites": [{ "source": "/(.*)", "destination": "/" }]
 }
