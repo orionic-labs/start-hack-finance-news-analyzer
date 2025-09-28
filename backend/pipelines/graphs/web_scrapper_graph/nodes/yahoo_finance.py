@@ -98,7 +98,7 @@ def scrape_yahoo_finance_rss() -> list:
         feed = feedparser.parse(rss_url)
         articles = []
 
-        for entry in feed.entries[:3]:
+        for entry in feed.entries[2:10]:
             title = entry.title
             link = entry.link
 
