@@ -13,7 +13,6 @@ def register_tasks(app):
         sources = [
             "https://www.cnbc.com/id/100003114/device/rss/rss.html",
             "https://www.reuters.com/world/",
-            "https://finance.yahoo.com/news/"
         ]
         for source in sources:
             await graph.ainvoke({"link": source})
