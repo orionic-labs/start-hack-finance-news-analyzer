@@ -86,14 +86,14 @@ export default function Sources() {
         url: sourceLink,
         category: sourceCategory,
         description: sourceDescription,
-        status: "active",
+        status: "maintenance",
         articlesPerDay: 0,
         reliability: 0,
         keywords: sourceKeywords
           .split(",")
           .map((k) => k.trim())
           .filter((k) => k),
-        enabled: true,
+        enabled: false,
       };
 
       await api.post("/sources/add", newSource);
