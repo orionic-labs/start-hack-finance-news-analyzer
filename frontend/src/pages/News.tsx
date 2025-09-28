@@ -1,6 +1,7 @@
 // src/pages/News.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '@/lib/axios';
+import { AxiosError } from 'axios';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -33,7 +34,7 @@ type News = {
     markets: string[];
     clients: string[];
     importance?: 'low' | 'medium' | 'high';
-    isImportant: boolean; // must be boolean after fetch
+    isImportant: boolean;
     publishedAt: string | null;
     source: string;
     communitySentiment: number;
@@ -44,7 +45,7 @@ type Client = {
     id: number;
     name: string;
     status: string;
-    portfolio: Record<string, number>; // { "<asset_class>": percent }
+    portfolio: Record<string, number>;
 };
 
 type NewsItemProps = {
@@ -52,8 +53,8 @@ type NewsItemProps = {
     toggling: boolean;
     onToggleImportant: (n: News) => Promise<void>;
     onUpdateNewsLocal: (id: string, updated: Partial<News>) => void;
-    resolveClients: (markets: string[]) => string[]; // FE recompute
-    allClientNames: string[]; // for manual dialog
+    resolveClients: (markets: string[]) => string[];
+    allClientNames: string[];
 };
 
 type ChatMessage = {
@@ -62,6 +63,14 @@ type ChatMessage = {
     content: string;
 };
 
+// тип ответа API для News
+type NewsApiResponse = Partial<News> & {
+    importance_flag?: unknown;
+    importanceFlag?: unknown;
+    important?: unknown;
+};
+
+// --- helpers ---
 function uid() {
     return crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
@@ -72,7 +81,6 @@ function formatTime(ts: string | null) {
     return date.toLocaleDateString();
 }
 
-// ---------- helpers for FE-side targeting ----------
 const norm = (s?: string) => (s ?? '').trim().toLowerCase();
 
 function resolveClientsForMarkets(markets: string[], clientsList: Client[]): string[] {
@@ -84,15 +92,21 @@ function resolveClientsForMarkets(markets: string[], clientsList: Client[]): str
         for (const [asset, pct] of Object.entries(pf)) {
             if ((pct ?? 0) > 0 && mset.has(norm(asset))) {
                 targeted.push(c.name);
-                break; // one hit is enough
+                break;
             }
         }
     }
-    // de-dupe while preserving order
     return Array.from(new Set(targeted));
 }
 
 const unionStrings = (a: string[], b: string[]) => Array.from(new Set([...(a ?? []), ...(b ?? [])]));
+
+const normalizeBool = (v: unknown): boolean => {
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'number') return v !== 0;
+    if (typeof v === 'string') return ['true', 't', '1', 'yes', 'y'].includes(v.toLowerCase());
+    return false;
+};
 
 // --------------------------------------------------
 
@@ -106,7 +120,6 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal, resolv
 
     const handleSaveMarkets = () => {
         const recomputed = resolveClients(selectedMarkets);
-        // keep any manual tags the user added previously
         const mergedClients = unionStrings(selectedClients, recomputed);
         onUpdateNewsLocal(news.id, { markets: selectedMarkets, clients: mergedClients });
         setEditMarketsOpen(false);
@@ -118,7 +131,6 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal, resolv
     };
 
     useEffect(() => {
-        // keep local selectors in sync when parent updates (e.g., recomputed or remote refresh)
         setSelectedMarkets(news.markets ?? []);
         setSelectedClients(news.clients ?? []);
     }, [news.markets, news.clients]);
@@ -166,7 +178,6 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal, resolv
 
             {/* Content */}
             <CardContent className="flex flex-col flex-1">
-                {/* Top: summary with show more */}
                 <div className="mb-4">
                     <p className={`text-sm text-gray-600 ${expanded ? '' : 'line-clamp-3'}`}>{news.summary}</p>
                     {news.summary && news.summary.length > 200 && (
@@ -260,7 +271,7 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal, resolv
                     </div>
                 </div>
 
-                {/* KPI Block (fixed near bottom thanks to flex-1 spacer above) */}
+                {/* KPI Block */}
                 <div className="bg-purple-50 rounded-lg p-3">
                     <h4 className="text-sm font-semibold mb-2">Key Performance Indicators</h4>
                     <div className="flex justify-around">
@@ -269,7 +280,6 @@ function NewsItem({ news, toggling, onToggleImportant, onUpdateNewsLocal, resolv
                     </div>
                 </div>
 
-                {/* Footer */}
                 <div className="flex justify-between text-xs text-gray-500 border-t pt-2 mt-3">
                     <span>
                         <a className="underline" href={news.url}>
@@ -299,7 +309,7 @@ export default function News() {
     const [chatLoading, setChatLoading] = useState(false);
     const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
-    // Fetch news + clients, then compute targeted clients on FE
+    // Fetch news + clients
     useEffect(() => {
         let mounted = true;
         (async () => {
@@ -307,36 +317,43 @@ export default function News() {
                 setIsLoading(true);
                 setError(null);
 
-                const [newsResp, clientsResp] = await Promise.all([api.get<News[]>('/news/list'), api.get<Client[]>('/clients/list')]);
+                const [newsResp, clientsResp] = await Promise.all([api.get<NewsApiResponse[]>('/news/list'), api.get<Client[]>('/clients/list')]);
                 if (!mounted) return;
-
-                const normalizeBool = (v: any): boolean => {
-                    if (typeof v === 'boolean') return v;
-                    if (typeof v === 'number') return v !== 0;
-                    if (typeof v === 'string') return ['true', 't', '1', 'yes', 'y'].includes(v.toLowerCase());
-                    return false;
-                };
 
                 const rawNews = Array.isArray(newsResp.data) ? newsResp.data : [];
                 const rawClients = Array.isArray(clientsResp.data) ? clientsResp.data : [];
 
                 setClients(rawClients);
 
-                const mapped = rawNews.map((d: any) => {
+                const mapped: News[] = rawNews.map((d) => {
                     const rawImp = d?.isImportant ?? d?.importance_flag ?? d?.importanceFlag ?? d?.important ?? null;
                     const markets = Array.isArray(d?.markets) ? d.markets : [];
                     const clientsCalc = resolveClientsForMarkets(markets, rawClients);
+
                     return {
-                        ...d,
-                        isImportant: normalizeBool(rawImp),
+                        id: d.id ?? uid(),
+                        url: d.url ?? '',
+                        title: d.title ?? 'Untitled',
+                        summary: d.summary ?? '',
+                        photo: d.photo ?? null,
                         markets,
                         clients: clientsCalc,
-                    } as News;
+                        importance: d.importance as 'low' | 'medium' | 'high' | undefined,
+                        isImportant: normalizeBool(rawImp),
+                        publishedAt: d.publishedAt ?? null,
+                        source: d.source ?? 'Unknown',
+                        communitySentiment: d.communitySentiment ?? 0,
+                        trustIndex: d.trustIndex ?? 0,
+                    };
                 });
 
                 setNewsData(mapped);
-            } catch (e: any) {
-                setError(e?.response?.data?.error || e?.message || 'Failed to fetch news');
+            } catch (e: unknown) {
+                if (e instanceof AxiosError) {
+                    setError(e.response?.data?.error || e.message || 'Failed to fetch news');
+                } else {
+                    setError('Unexpected error while fetching news');
+                }
             } finally {
                 if (mounted) setIsLoading(false);
             }
@@ -346,8 +363,7 @@ export default function News() {
         };
     }, []);
 
-    // If client allocations update while the page is open and we refetch them elsewhere,
-    // recompute clients for each news from markets and union with any manual selections.
+    // recompute clients when clients list updates
     useEffect(() => {
         if (!clients.length || !newsData.length) return;
         setNewsData((prev) =>
@@ -356,42 +372,41 @@ export default function News() {
                 return { ...n, clients: unionStrings(n.clients ?? [], computed) };
             })
         );
-    }, [clients]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [clients]);
 
-    // Toggle importance (optimistic)
     const handleToggleImportant = async (n: News) => {
         try {
             setTogglingId(n.id);
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: !it.isImportant } : it)));
-            await api.post('/news/importance', { url: n.url }); // server toggles
-        } catch (e: any) {
+            await api.post('/news/importance', { url: n.url });
+        } catch (e: unknown) {
+            if (e instanceof AxiosError) {
+                setError(e.response?.data?.error || e.message || 'Failed to toggle importance');
+            } else {
+                setError('Unexpected error while toggling importance');
+            }
             setNewsData((prev) => prev.map((it) => (it.id === n.id ? { ...it, isImportant: n.isImportant } : it)));
-            setError(e?.response?.data?.error || e?.message || 'Failed to toggle importance');
         } finally {
             setTogglingId(null);
         }
     };
 
-    // Local-only updates (markets/clients tagging UI)
     const handleUpdateNewsLocal = (id: string, updates: Partial<News>) => {
         setNewsData((prev) => prev.map((n) => (n.id === id ? { ...n, ...updates } : n)));
     };
 
-    // Apply importance-only filter
     const filteredNews = useMemo(() => {
         if (filterImportance === 'important') return newsData.filter((n) => n.isImportant === true);
         if (filterImportance === 'not-important') return newsData.filter((n) => n.isImportant === false);
         return newsData;
     }, [newsData, filterImportance]);
 
-    // Chat autoscroll
     useEffect(() => {
         if (chatScrollRef.current) {
             chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
         }
     }, [chatMessages, chatLoading]);
 
-    // Chat submit
     const handleChatSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const msg = chatMessage.trim();
@@ -403,12 +418,12 @@ export default function News() {
         setChatLoading(true);
 
         try {
-            const { data } = await api.post('/chatbot/send_message_chat', { customers: msg });
+            const { data } = await api.post<{ answer?: string }>('/chatbot/send_message_chat', { customers: msg });
             const answer: string = typeof data?.answer === 'string' ? data.answer : 'Sorry, I could not generate an answer.';
             const botMsg: ChatMessage = { id: uid(), role: 'assistant', content: answer };
             setChatMessages((prev) => [...prev, botMsg]);
-        } catch (e: any) {
-            const message = e?.response?.data?.error || e?.message || 'Failed to contact the assistant.';
+        } catch (e: unknown) {
+            const message = e instanceof AxiosError ? e.response?.data?.error || e.message : 'Unexpected error contacting assistant';
             setChatMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: `Error: ${message}` }]);
         } finally {
             setChatLoading(false);
@@ -442,7 +457,6 @@ export default function News() {
                     </div>
                 </div>
 
-                {/* States */}
                 {isLoading && (
                     <div className="flex items-center gap-2 text-muted-foreground">
                         <Loader2 className="w-4 h-4 animate-spin" />

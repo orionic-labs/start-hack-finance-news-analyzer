@@ -1,5 +1,5 @@
 // src/pages/DashboardPodcasts.tsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '@/lib/axios';
 
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { RefreshCw, Download, Edit3, CheckCircle, Volume2, Loader2 } from 'lucide-react';
 import { usePodcastStore } from '@/store/podcastStore';
+import { AxiosError } from 'axios';
 
 type JobStatus = 'queued' | 'pending' | 'running' | 'done' | 'error' | 'idle';
 
@@ -38,16 +39,21 @@ export default function DashboardPodcasts() {
                 setError('Unexpected response when starting the podcast job.');
                 console.error('Unexpected /podcasts/start response:', res.data);
             }
-        } catch (e: any) {
-            console.error('Error starting podcast:', e);
-            setStatus('error');
-            setError(e?.response?.data?.message || e?.message || 'Failed to start podcast generation. Please try again.');
+        } catch (e: unknown) {
+            if (e instanceof AxiosError) {
+                console.error('Error starting podcast:', e);
+                setStatus('error');
+                setError(e.response?.data?.message || e.message || 'Failed to start podcast generation. Please try again.');
+            } else {
+                console.error('Unexpected error:', e);
+                setStatus('error');
+                setError('Unexpected error while starting podcast.');
+            }
         }
     };
 
-    // Build/rebuild audio URL whenever base64 changes (persists across navigation)
+    // Build/rebuild audio URL whenever base64 changes
     useEffect(() => {
-        // Revoke previously created object URL if any
         if (prevAudioUrlRef.current) {
             URL.revokeObjectURL(prevAudioUrlRef.current);
             prevAudioUrlRef.current = null;
@@ -79,7 +85,7 @@ export default function DashboardPodcasts() {
         };
     }, [voiceBase64]);
 
-    // Poll backend for status whenever a jobId exists (using shared axios instance)
+    // Poll backend for status whenever a jobId exists
     useEffect(() => {
         const startPolling = () => {
             if (!jobId) return;
@@ -107,14 +113,19 @@ export default function DashboardPodcasts() {
                         setStatus('error');
                         setError(data?.message || 'Podcast job failed.');
                     }
-                } catch (e: any) {
-                    // 404 → treat as error, otherwise keep spinner on transient faults
-                    if (e?.response?.status === 404) {
-                        setStatus('error');
-                        setError('Podcast job not found (404).');
+                } catch (e: unknown) {
+                    if (e instanceof AxiosError) {
+                        if (e.response?.status === 404) {
+                            setStatus('error');
+                            setError('Podcast job not found (404).');
+                        } else {
+                            console.warn('Polling transient error:', e.message);
+                            setStatus('pending');
+                        }
                     } else {
-                        console.warn('Polling transient error:', e?.message || e);
-                        setStatus('pending');
+                        console.error('Unexpected error during polling:', e);
+                        setStatus('error');
+                        setError('Unexpected error while polling podcast status.');
                     }
                 }
             };
