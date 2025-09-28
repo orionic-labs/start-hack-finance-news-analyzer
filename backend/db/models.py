@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, DateTime, Numeric, Boolean, ForeignKey, Integer
+from sqlalchemy import Column, Integer, String, Float, Boolean, JSON, ARRAY
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
@@ -29,6 +30,30 @@ class Article(Base):
     content_emb = Column(Vector1536)
     provider = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
+
+
+class ArticleAnalysis(Base):
+    __tablename__ = "article_analysis"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    article_url = Column(String, unique=True, nullable=False, index=True)
+    cluster_ids = Column(ARRAY(String))
+    event_type = Column(String)
+    tickers = Column(ARRAY(String))
+    companies = Column(ARRAY(String))
+    sectors = Column(ARRAY(String))
+    geos = Column(ARRAY(String))
+    numerics = Column(JSON)
+    impact_score = Column(Float)
+    confidence = Column(Float)
+    novelty = Column(Float)
+    executive_summary = Column(String)
+    bullets = Column(JSON)
+    actions = Column(JSON)
+    risks = Column(JSON)
+    citations = Column(JSON)
+    important = Column(Boolean, default=False)
+    markets = Column(ARRAY(String))
 
 
 class Account(Base):
